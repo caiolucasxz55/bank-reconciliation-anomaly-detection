@@ -20,7 +20,7 @@ def _frames(rows):
             "transaction_id": [r[0] for r in rows],
             "date": pd.to_datetime([r[1] for r in rows]),
             "amount": [r[2] for r in rows],
-            "description": ["" for _ in rows],
+            "description": [f"PIX {r[3] or 'DESCONHECIDO'}" for r in rows],
         }
     )
     matches = pd.DataFrame(
@@ -119,3 +119,31 @@ def test_output_keeps_input_order_and_has_no_missing_model_values():
     features = compute_features(transactions, matches, SUPPLIERS)
     assert list(features["transaction_id"]) == [r[0] for r in rows]
     assert not features[list(MODEL_FEATURES)].isna().any().any()
+
+
+def test_repeated_payments_to_an_unknown_payee_are_compared():
+    unknown = [("U1", "2025-06-10", 9800.0, "", ""), ("U2", "2025-06-11", 9800.0, "", "")]
+    features = _features([*_weekly(), *unknown])
+    assert features.loc["U2", "has_duplicate"] == 1
+    assert features.loc["U1", "has_duplicate"] == 0
+
+
+def test_usual_interval_excludes_the_payment_itself():
+    rows = [*_weekly(), ("W8", "2025-04-22", 1008.0, "W", "NF8")]  # 1 day after W7
+    features = _features(rows)
+    assert features.loc["W8", "usual_interval"] == 7
+    assert features.loc["W8", "short_interval"] == pytest.approx(1 - 1 / 7)
+
+
+def test_short_history_has_no_reference():
+    features = _features(_weekly(n=2))
+    assert features["usual_interval"].isna().all()
+    assert np.isnan(features.loc["W1", "amount_ratio"])
+    assert (features["short_interval"] == 0).all()
+
+
+@pytest.mark.parametrize("amount", [0.0, -10.0])
+def test_non_positive_amounts_are_rejected(amount):
+    transactions, matches = _frames([*_weekly(), ("X", "2025-06-10", amount, "W", "")])
+    with pytest.raises(ValueError, match="positive"):
+        compute_features(transactions, matches, SUPPLIERS)

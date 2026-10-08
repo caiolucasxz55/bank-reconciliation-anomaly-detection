@@ -31,9 +31,13 @@ def format_number(value: float) -> str:
     return f"{value:.1f}".replace(".", ",")
 
 
-def _days(n: float) -> str:
+def _count_days(n: int) -> str:
+    return "1 dia" if n == 1 else f"{n} dias"
+
+
+def _days_before(n: float) -> str:
     n = int(n)
-    return "no mesmo dia" if n == 0 else f"{n} dia antes" if n == 1 else f"{n} dias antes"
+    return "no mesmo dia" if n == 0 else f"{_count_days(n)} antes"
 
 
 @dataclass(frozen=True)
@@ -55,7 +59,20 @@ def _new_supplier_text(row: pd.Series) -> str:
     if not row["supplier_id"]:
         return "descrição não corresponde a nenhum fornecedor cadastrado"
     age = int(row["supplier_age_days"])
-    return "fornecedor cadastrado hoje" if age == 0 else f"fornecedor cadastrado há {age} dias"
+    if age < 0:
+        return f"pago {_count_days(-age)} antes do cadastro do fornecedor"
+    if age == 0:
+        return "fornecedor cadastrado no dia do pagamento"
+    return f"fornecedor cadastrado há {_count_days(age)}"
+
+
+def _short_interval_text(row: pd.Series) -> str:
+    days = int(row["days_since_last"])
+    since = "no mesmo dia do" if days == 0 else f"só {_count_days(days)} depois do"
+    return (
+        f"{since} último pagamento ao fornecedor "
+        f"(normal: cerca de {_count_days(round(row['usual_interval']))})"
+    )
 
 
 def _off_cycle_text(row: pd.Series) -> str:
@@ -70,7 +87,8 @@ RULES = (
         "has_duplicate",
         lambda r, _: bool(r["has_duplicate"]),
         lambda r: (
-            "outro pagamento de mesmo valor ao mesmo fornecedor " + _days(r["duplicate_days"])
+            "outro pagamento de mesmo valor ao mesmo fornecedor "
+            + _days_before(r["duplicate_days"])
         ),
     ),
     _Rule(
@@ -104,19 +122,21 @@ RULES = (
     _Rule(
         "short_interval",
         lambda r, c: r["short_interval"] >= c.short_interval and not r["has_duplicate"],
-        lambda r: (
-            f"só {int(r['days_since_last'])} dias desde o último pagamento ao "
-            f"fornecedor (normal: cerca de {round(r['usual_interval'])})"
-        ),
+        _short_interval_text,
     ),
 )
 
 
 def _rarity(features: pd.DataFrame) -> pd.DataFrame:
-    """Fraction of transactions with a value at most as extreme as each one, per feature."""
-    columns = {rule.feature for rule in RULES}
+    """Per feature, 1 minus the share of transactions at least as extreme as each value.
+
+    A flag set on 2% of payments gets rarity 0.98 and one set on 40% gets 0.60, so the
+    rarer reason comes first.
+    """
+    columns = sorted({rule.feature for rule in RULES})
     ranked = features.assign(abs_log_amount_ratio=features["log_amount_ratio"].abs())
-    return ranked[sorted(columns)].rank(pct=True, method="max")
+    share_at_least = ranked[columns].rank(ascending=False, method="max", pct=True)
+    return 1.0 - share_at_least
 
 
 def explain(features: pd.DataFrame, config: ReasonConfig | None = None) -> list[list[str]]:

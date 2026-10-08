@@ -56,6 +56,7 @@ def test_render(report):
     assert "Precisão nas 5 transações de maior score: 80%" in text
 
 
-def test_missing_ground_truth_is_an_error():
-    with pytest.raises(ValueError, match="ground truth"):
-        evaluate_anomalies(_scores(3, 1), _truth(2, {}))
+@pytest.mark.parametrize(("n_scores", "n_truth"), [(3, 2), (2, 3)])
+def test_scores_and_truth_must_cover_the_same_transactions(n_scores, n_truth):
+    with pytest.raises(ValueError, match="different transactions"):
+        evaluate_anomalies(_scores(n_scores, 1), _truth(n_truth, {}))

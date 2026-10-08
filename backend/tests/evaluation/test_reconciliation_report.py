@@ -61,7 +61,7 @@ def test_by_noise_excludes_duplicates_from_clean_cases(report):
 
 
 def test_missing_ground_truth_is_an_error():
-    with pytest.raises(ValueError, match="ground truth"):
+    with pytest.raises(ValueError, match="different transactions"):
         evaluate_reconciliation(
             _matches(("T9", "divergente", None, 0.0, "", "")), _truth(("T1", "", ""))
         )
@@ -75,3 +75,11 @@ def test_to_markdown():
 def test_empty_input_does_not_divide_by_zero():
     report = evaluate_reconciliation(_matches(), _truth())
     assert report.by_status["Participação"].tolist() == ["—", "—", "—"]
+
+
+def test_truth_with_extra_transactions_is_an_error():
+    with pytest.raises(ValueError, match="different transactions"):
+        evaluate_reconciliation(
+            _matches(("T1", "divergente", None, 0.0, "", "")),
+            _truth(("T1", "", ""), ("T2", "NF1", "")),
+        )

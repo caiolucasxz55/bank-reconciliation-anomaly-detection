@@ -72,4 +72,16 @@ def test_stale_results_fail_cleanly(data_dir, capsys):
     assert main(["detect", "--data", data]) == 2
     assert "reconcile" in capsys.readouterr().err
     assert main(["evaluate", "--data", data]) == 2
-    assert "pipeline" in capsys.readouterr().err
+    assert "reconcile" in capsys.readouterr().err
+
+
+def test_results_from_another_seed_with_same_ids_are_rejected(data_dir, capsys):
+    data = str(data_dir)
+    assert main(["reconcile", "--data", data]) == 0
+    assert main(["detect", "--data", data]) == 0
+    # Same period and settings: transaction ids may coincide, the content does not.
+    assert main(["generate", "--seed", "5", "--months", "4", "--out", data]) == 0
+    capsys.readouterr()
+    assert main(["detect", "--data", data]) == 2
+    assert "outros dados" in capsys.readouterr().err
+    assert main(["evaluate", "--data", data]) == 2

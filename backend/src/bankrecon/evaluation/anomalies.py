@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from bankrecon.evaluation.tables import format_percent, to_markdown
+from bankrecon.evaluation.truth import join_truth
 
 ANOMALY_LABELS = {
     "duplicate_payment": "Pagamento duplicado",
@@ -35,14 +36,7 @@ def evaluate_anomalies(
     Recall is measured at the high-risk cut (``high_risk`` column) and, for context, at
     a wider cut of the top 10% of the ranking.
     """
-    frame = scores.merge(
-        ground_truth[["transaction_id", "anomaly_type"]],
-        on="transaction_id",
-        how="inner",
-        validate="one_to_one",
-    )
-    if len(frame) != len(scores):
-        raise ValueError("every transaction must appear in the ground truth")
+    frame = join_truth(scores, ground_truth, ["anomaly_type"])
 
     wide_count = max(1, round(len(frame) * WIDE_SHARE))
     frame["wide"] = frame["rank"] <= wide_count

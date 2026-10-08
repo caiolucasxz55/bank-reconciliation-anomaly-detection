@@ -57,6 +57,27 @@ def test_normal_payment_has_no_reasons():
             "outro pagamento de mesmo valor ao mesmo fornecedor no mesmo dia",
         ),
         ({"is_new_supplier": 1, "supplier_age_days": 4.0}, "fornecedor cadastrado há 4 dias"),
+        ({"is_new_supplier": 1, "supplier_age_days": 1.0}, "fornecedor cadastrado há 1 dia"),
+        (
+            {"is_new_supplier": 1, "supplier_age_days": 0.0},
+            "fornecedor cadastrado no dia do pagamento",
+        ),
+        (
+            {"is_new_supplier": 1, "supplier_age_days": -5.0},
+            "pago 5 dias antes do cadastro do fornecedor",
+        ),
+        (
+            {"has_duplicate": 1, "duplicate_days": 1.0},
+            "outro pagamento de mesmo valor ao mesmo fornecedor 1 dia antes",
+        ),
+        (
+            {"short_interval": 0.9, "days_since_last": 1.0},
+            "só 1 dia depois do último pagamento ao fornecedor (normal: cerca de 7 dias)",
+        ),
+        (
+            {"short_interval": 1.0, "days_since_last": 0.0},
+            "no mesmo dia do último pagamento ao fornecedor (normal: cerca de 7 dias)",
+        ),
         (
             {"is_new_supplier": 1, "supplier_id": ""},
             "descrição não corresponde a nenhum fornecedor cadastrado",
@@ -72,7 +93,7 @@ def test_normal_payment_has_no_reasons():
         ),
         (
             {"short_interval": 0.7, "days_since_last": 2.0},
-            "só 2 dias desde o último pagamento ao fornecedor (normal: cerca de 7)",
+            "só 2 dias depois do último pagamento ao fornecedor (normal: cerca de 7 dias)",
         ),
     ],
 )
@@ -94,15 +115,22 @@ def test_duplicate_hides_short_interval_reason():
 
 
 def test_reasons_are_capped_and_rarest_first():
-    row = _row(
-        has_duplicate=1, duplicate_days=1.0, amount_ratio=3.0, is_weekend=1, off_cycle=1,
-        date=pd.Timestamp("2025-03-09"),
-    )  # fmt: skip
-    common = _row(off_cycle=1)
-    frame_rows = [row, *[common] * 5]
-    [reasons, *_] = _explain(*frame_rows, config=ReasonConfig(max_reasons=2))
+    sunday = pd.Timestamp("2025-03-09")
+    target = _row(has_duplicate=1, duplicate_days=1.0, is_weekend=1, off_cycle=1, date=sunday)
+    # Off-cycle is common in this population, weekend payments are not.
+    frame = pd.DataFrame([target, *[_row(off_cycle=1)] * 8, *[_row()] * 11])
+    [reasons, *_] = explain(frame, ReasonConfig(max_reasons=2))
     assert len(reasons) == 2
-    assert not any("ciclo" in r for r in reasons)  # off-cycle is common here
+    assert not any("ciclo" in r for r in reasons)
+
+
+def test_rarer_flag_comes_first_regardless_of_rule_order():
+    # off_cycle is declared after is_new_supplier in RULES but is the rarer one here.
+    target = _row(is_new_supplier=1, supplier_age_days=3.0, off_cycle=1)
+    others = [_row(is_new_supplier=1, supplier_age_days=9.0)] * 9
+    frame = pd.DataFrame([target, *others, *[_row()] * 10])
+    [reasons, *_] = explain(frame)
+    assert reasons[0].startswith("fora do ciclo")
 
 
 @pytest.mark.parametrize(

@@ -18,6 +18,8 @@ from bankrecon.generator import Dataset, GeneratorConfig, generate_dataset
 from bankrecon.reconciliation import reconcile
 from bankrecon.results import (
     ResultsMissingError,
+    StaleResultsError,
+    fingerprint,
     load_matches,
     load_scores,
     save_matches,
@@ -32,11 +34,13 @@ class CommandError(Exception):
     """Expected failure reported to the user without a traceback."""
 
 
-def _load_dataset(directory: Path) -> Dataset:
+def _load_dataset(directory: Path) -> tuple[Dataset, str]:
+    """The dataset and the fingerprint of what the pipeline reads from it."""
     try:
-        return Dataset.load(directory)
+        dataset = Dataset.load(directory)
     except FileNotFoundError as error:
         raise CommandError(f"{error}. Rode 'bankrecon generate' antes.") from error
+    return dataset, fingerprint(dataset.transactions, dataset.invoices, dataset.suppliers)
 
 
 def _cmd_generate(args: argparse.Namespace) -> None:
@@ -60,36 +64,34 @@ def _cmd_generate(args: argparse.Namespace) -> None:
 
 
 def _cmd_reconcile(args: argparse.Namespace) -> None:
-    dataset = _load_dataset(args.data)
+    dataset, dataset_fp = _load_dataset(args.data)
     matches = reconcile(dataset.transactions, dataset.invoices, dataset.suppliers)
-    path = save_matches(matches, args.data)
+    path = save_matches(matches, args.data, dataset_fp=dataset_fp)
     counts = matches["status"].value_counts()
     summary = ", ".join(f"{count} {status}" for status, count in counts.items())
     print(f"Conciliação: {summary}. Resultado em {path}")
 
 
 def _cmd_detect(args: argparse.Namespace) -> None:
-    dataset = _load_dataset(args.data)
-    matches = load_matches(args.data)
-    if set(matches["transaction_id"]) != set(dataset.transactions["transaction_id"]):
-        raise CommandError("a conciliação é de outros dados. Rode 'bankrecon reconcile' de novo.")
-    scores = detect_anomalies(dataset.transactions, matches, dataset.suppliers)
-    path = save_scores(scores, args.data)
+    dataset, dataset_fp = _load_dataset(args.data)
+    matches = load_matches(args.data, dataset_fp=dataset_fp)
+    try:
+        scores = detect_anomalies(dataset.transactions, matches, dataset.suppliers)
+    except ValueError as error:
+        raise CommandError(str(error)) from error
+    path = save_scores(scores, args.data, dataset_fp=dataset_fp, matches_fp=fingerprint(matches))
     print(f"Anomalias: {int(scores['high_risk'].sum())} transações de alto risco. Em {path}")
 
 
 def _cmd_evaluate(args: argparse.Namespace) -> None:
-    dataset = _load_dataset(args.data)
+    dataset, dataset_fp = _load_dataset(args.data)
     truth = dataset.ground_truth
-    matches = load_matches(args.data)
-    scores = load_scores(args.data)
-    try:
-        sections = [
-            render_reconciliation(evaluate_reconciliation(matches, truth)),
-            render_anomalies(evaluate_anomalies(scores, truth)),
-        ]
-    except ValueError as error:
-        raise CommandError(f"{error}. Rode o pipeline de novo para estes dados.") from error
+    matches = load_matches(args.data, dataset_fp=dataset_fp)
+    scores = load_scores(args.data, dataset_fp=dataset_fp, matches_fp=fingerprint(matches))
+    sections = [
+        render_reconciliation(evaluate_reconciliation(matches, truth)),
+        render_anomalies(evaluate_anomalies(scores, truth)),
+    ]
     print("\n\n".join(sections))
 
 
@@ -122,7 +124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         args.handler(args)
-    except (CommandError, ResultsMissingError) as error:
+    except (CommandError, ResultsMissingError, StaleResultsError) as error:
         print(f"erro: {error}", file=sys.stderr)
         return EXIT_USAGE
     return 0

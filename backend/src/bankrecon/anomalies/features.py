@@ -15,6 +15,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from bankrecon.reconciliation.resolver import counterparty
 from bankrecon.schema import split_list
 
 # Columns fed to the model, in order.
@@ -42,12 +43,20 @@ class FeatureConfig:
     min_payments_for_cycle: int = 4
 
 
-def _leave_one_out_median(amounts: pd.Series) -> pd.Series:
-    values = amounts.to_numpy()
-    if len(values) < 2:
-        return pd.Series(np.nan, index=amounts.index)
-    medians = [np.median(np.delete(values, i)) for i in range(len(values))]
-    return pd.Series(medians, index=amounts.index)
+# A reference (typical amount or interval) needs at least this many other observations.
+MIN_REFERENCE_SIZE = 2
+
+
+def _leave_one_out_median(values: pd.Series) -> pd.Series:
+    """For each position, the median of the other non-missing values of the group."""
+    array = values.to_numpy(dtype=float)
+    out = np.full(len(array), np.nan)
+    for i in range(len(array)):
+        others = np.delete(array, i)
+        others = others[~np.isnan(others)]
+        if len(others) >= MIN_REFERENCE_SIZE:
+            out[i] = np.median(others)
+    return pd.Series(out, index=values.index)
 
 
 def _circular_day_distance(day: pd.Series, usual: int) -> pd.Series:
@@ -80,15 +89,19 @@ def compute_features(
     description resolves to, even for unmatched payments) groups payments by supplier.
     """
     config = config or FeatureConfig()
-    frame = transactions[["transaction_id", "date", "amount"]].merge(
+    if (transactions["amount"] <= 0).any():
+        raise ValueError("transaction amounts must be positive debits")
+    frame = transactions[["transaction_id", "date", "amount", "description"]].merge(
         matches[["transaction_id", "supplier_id", "invoice_ids"]], on="transaction_id", how="left"
     )
     frame["supplier_id"] = frame["supplier_id"].fillna("")
     n_invoices = frame["invoice_ids"].fillna("").map(lambda ids: len(split_list(ids)))
     frame["unit_amount"] = frame["amount"] / n_invoices.clip(lower=1)
     known = frame["supplier_id"] != ""
-    # Unresolved descriptions are grouped one per transaction (no shared history).
-    frame["group"] = frame["supplier_id"].where(known, "?" + frame["transaction_id"])
+    # Payments to an unresolved payee share history by their normalized description, so
+    # repeated payments to the same unknown counterparty are still compared.
+    unknown_group = "?" + frame["description"].map(counterparty)
+    frame["group"] = frame["supplier_id"].where(known, unknown_group)
     frame = frame.sort_values(["date", "transaction_id"]).reset_index(drop=True)
 
     frame["amount_vs_global"] = frame["unit_amount"] / frame["unit_amount"].median()
@@ -97,7 +110,10 @@ def compute_features(
     frame["supplier_median"] = by_group["unit_amount"].transform(_leave_one_out_median)
     frame["amount_ratio"] = frame["unit_amount"] / frame["supplier_median"]
     frame["days_since_last"] = by_group["date"].diff().dt.days
-    frame["usual_interval"] = by_group["days_since_last"].transform("median")
+    # Leave-one-out too: a short gap must not pull down its own reference.
+    frame["usual_interval"] = frame.groupby("group", sort=False)["days_since_last"].transform(
+        _leave_one_out_median
+    )
     # One-sided: only a gap much shorter than usual is suspicious (long gaps are common,
     # e.g. sporadic suppliers or grouped invoices).
     interval_ratio = frame["days_since_last"] / frame["usual_interval"].clip(lower=1)

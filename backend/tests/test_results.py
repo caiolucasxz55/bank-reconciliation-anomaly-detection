@@ -3,6 +3,8 @@ import pytest
 
 from bankrecon.results import (
     ResultsMissingError,
+    StaleResultsError,
+    fingerprint,
     load_matches,
     load_scores,
     save_matches,
@@ -21,8 +23,8 @@ def test_matches_round_trip(tmp_path):
             "supplier_id": ["S1", ""],
         }
     )
-    save_matches(matches, tmp_path)
-    pd.testing.assert_frame_equal(load_matches(tmp_path), matches)
+    save_matches(matches, tmp_path, dataset_fp="d1")
+    pd.testing.assert_frame_equal(load_matches(tmp_path, dataset_fp="d1"), matches)
 
 
 def test_scores_round_trip(tmp_path):
@@ -37,12 +39,39 @@ def test_scores_round_trip(tmp_path):
             "reasons": [""],
         }
     )
-    save_scores(scores, tmp_path)
-    pd.testing.assert_frame_equal(load_scores(tmp_path), scores)
+    save_scores(scores, tmp_path, dataset_fp="d1", matches_fp="m1")
+    loaded = load_scores(tmp_path, dataset_fp="d1", matches_fp="m1")
+    pd.testing.assert_frame_equal(loaded, scores)
 
 
-@pytest.mark.parametrize(("loader", "step"), [(load_matches, "reconcile"), (load_scores, "detect")])
-def test_missing_results_name_the_step_to_run(tmp_path, loader, step):
-    with pytest.raises(ResultsMissingError, match=f"bankrecon {step}") as info:
-        loader(tmp_path)
-    assert info.value.step == step
+def test_missing_results_name_the_step_to_run(tmp_path):
+    with pytest.raises(ResultsMissingError, match="bankrecon reconcile") as info:
+        load_matches(tmp_path, dataset_fp="d1")
+    assert info.value.step == "reconcile"
+    with pytest.raises(ResultsMissingError, match="bankrecon detect"):
+        load_scores(tmp_path, dataset_fp="d1", matches_fp="m1")
+
+
+def test_results_from_other_inputs_are_stale(tmp_path):
+    frame = pd.DataFrame({"transaction_id": ["T1"]})
+    save_matches(frame, tmp_path, dataset_fp="d1")
+    with pytest.raises(StaleResultsError, match="bankrecon reconcile"):
+        load_matches(tmp_path, dataset_fp="d2")
+
+    save_scores(frame, tmp_path, dataset_fp="d1", matches_fp="m1")
+    with pytest.raises(StaleResultsError, match="bankrecon detect"):
+        load_scores(tmp_path, dataset_fp="d1", matches_fp="m2")
+
+
+def test_results_without_metadata_are_stale(tmp_path):
+    save_matches(pd.DataFrame({"transaction_id": ["T1"]}), tmp_path, dataset_fp="d1")
+    (tmp_path / "results" / "matches.meta.json").unlink()
+    with pytest.raises(StaleResultsError):
+        load_matches(tmp_path, dataset_fp="d1")
+
+
+def test_fingerprint_changes_with_content():
+    a = pd.DataFrame({"x": [1, 2]})
+    assert fingerprint(a) == fingerprint(a.copy())
+    assert fingerprint(a) != fingerprint(pd.DataFrame({"x": [1, 3]}))
+    assert fingerprint(a) != fingerprint(pd.DataFrame({"y": [1, 2]}))
