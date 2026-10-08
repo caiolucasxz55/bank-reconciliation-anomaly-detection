@@ -2,7 +2,7 @@ import pytest
 
 from bankrecon.calendar import is_weekend
 from bankrecon.generator.anomalies import OUTLIER_FACTOR, AnomalyType
-from bankrecon.generator.dataset import LIST_SEPARATOR
+from bankrecon.schema import LIST_SEPARATOR
 
 
 @pytest.fixture(scope="module")

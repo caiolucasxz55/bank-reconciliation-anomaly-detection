@@ -19,3 +19,34 @@ def test_generate_writes_dataset(tmp_path, capsys):
 def test_generate_reports_invalid_config(tmp_path, capsys):
     assert main(["generate", "--months", "1", "--out", str(tmp_path)]) == 2
     assert "months" in capsys.readouterr().err
+
+
+def test_reconcile_then_evaluate(tmp_path, capsys):
+    assert main(["generate", "--seed", "3", "--months", "4", "--out", str(tmp_path)]) == 0
+    assert main(["reconcile", "--data", str(tmp_path)]) == 0
+    assert (tmp_path / "results" / "matches.csv").exists()
+    capsys.readouterr()
+    assert main(["evaluate", "--data", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "Acerto por camada" in out
+    assert "| 1. Exata |" in out
+
+
+def test_reconcile_without_data_fails_cleanly(tmp_path, capsys):
+    assert main(["reconcile", "--data", str(tmp_path / "missing")]) == 2
+    assert "bankrecon generate" in capsys.readouterr().err
+
+
+def test_evaluate_without_results_fails_cleanly(tmp_path, capsys):
+    assert main(["generate", "--months", "3", "--out", str(tmp_path)]) == 0
+    assert main(["evaluate", "--data", str(tmp_path)]) == 2
+    assert "bankrecon reconcile" in capsys.readouterr().err
+
+
+def test_evaluate_with_stale_results_fails_cleanly(tmp_path, capsys):
+    assert main(["generate", "--seed", "1", "--months", "6", "--out", str(tmp_path)]) == 0
+    assert main(["reconcile", "--data", str(tmp_path)]) == 0
+    assert main(["generate", "--seed", "1", "--months", "3", "--out", str(tmp_path)]) == 0
+    capsys.readouterr()
+    assert main(["evaluate", "--data", str(tmp_path)]) == 2
+    assert "reconcile" in capsys.readouterr().err
