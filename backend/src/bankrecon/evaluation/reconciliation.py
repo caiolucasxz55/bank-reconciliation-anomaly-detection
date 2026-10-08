@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from bankrecon.evaluation.tables import format_percent, to_markdown
+from bankrecon.evaluation.truth import join_truth
 from bankrecon.reconciliation.models import Layer, MatchStatus
 from bankrecon.schema import LIST_SEPARATOR, split_list
 
@@ -39,12 +40,8 @@ class ReconciliationReport:
 
 
 def _join(matches: pd.DataFrame, ground_truth: pd.DataFrame) -> pd.DataFrame:
-    truth = ground_truth[["transaction_id", "invoice_ids", "noise"]].rename(
-        columns={"invoice_ids": "true_invoice_ids"}
-    )
-    frame = matches.merge(truth, on="transaction_id", how="inner", validate="one_to_one")
-    if len(frame) != len(matches):
-        raise ValueError("every transaction must appear in the ground truth")
+    truth = ground_truth.rename(columns={"invoice_ids": "true_invoice_ids"})
+    frame = join_truth(matches, truth, ["true_invoice_ids", "noise"])
     frame["correct"] = [
         _invoice_set(found) == _invoice_set(true)
         for found, true in zip(frame["invoice_ids"], frame["true_invoice_ids"], strict=True)

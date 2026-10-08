@@ -1,4 +1,7 @@
-"""Command-line entry point."""
+"""Command-line entry point.
+
+Typical flow: ``generate`` -> ``reconcile`` -> ``detect`` -> ``evaluate``.
+"""
 
 from __future__ import annotations
 
@@ -8,18 +11,39 @@ from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
-import pandas as pd
-
+from bankrecon.anomalies import detect_anomalies
 from bankrecon.evaluation import evaluate_reconciliation, render_reconciliation
+from bankrecon.evaluation.anomalies import evaluate_anomalies, render_anomalies
 from bankrecon.generator import Dataset, GeneratorConfig, generate_dataset
 from bankrecon.reconciliation import reconcile
+from bankrecon.results import (
+    ResultsMissingError,
+    StaleResultsError,
+    fingerprint,
+    load_matches,
+    load_scores,
+    save_matches,
+    save_scores,
+)
 
 DEFAULT_DATA_DIR = Path("data")
-RESULTS_DIR = "results"
-MATCHES_FILE = "matches.csv"
+EXIT_USAGE = 2
 
 
-def _cmd_generate(args: argparse.Namespace) -> int:
+class CommandError(Exception):
+    """Expected failure reported to the user without a traceback."""
+
+
+def _load_dataset(directory: Path) -> tuple[Dataset, str]:
+    """The dataset and the fingerprint of what the pipeline reads from it."""
+    try:
+        dataset = Dataset.load(directory)
+    except FileNotFoundError as error:
+        raise CommandError(f"{error}. Rode 'bankrecon generate' antes.") from error
+    return dataset, fingerprint(dataset.transactions, dataset.invoices, dataset.suppliers)
+
+
+def _cmd_generate(args: argparse.Namespace) -> None:
     try:
         config = GeneratorConfig(
             seed=args.seed,
@@ -30,58 +54,45 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         )
         dataset = generate_dataset(config)
     except ValueError as error:
-        print(f"erro: {error}", file=sys.stderr)
-        return 2
+        raise CommandError(str(error)) from error
     dataset.save(args.out)
     anomalies = (dataset.ground_truth["anomaly_type"] != "").sum()
     print(
         f"Gerados {len(dataset.suppliers)} fornecedores, {len(dataset.invoices)} notas, "
         f"{len(dataset.transactions)} transações ({anomalies} anomalias) em {args.out}"
     )
-    return 0
 
 
-def _load_dataset(directory: Path) -> Dataset | None:
-    try:
-        return Dataset.load(directory)
-    except FileNotFoundError as error:
-        print(f"erro: {error}. Rode 'bankrecon generate' antes.", file=sys.stderr)
-        return None
-
-
-def _cmd_reconcile(args: argparse.Namespace) -> int:
-    dataset = _load_dataset(args.data)
-    if dataset is None:
-        return 2
+def _cmd_reconcile(args: argparse.Namespace) -> None:
+    dataset, dataset_fp = _load_dataset(args.data)
     matches = reconcile(dataset.transactions, dataset.invoices, dataset.suppliers)
-    out = args.data / RESULTS_DIR
-    out.mkdir(parents=True, exist_ok=True)
-    matches.to_csv(out / MATCHES_FILE, index=False)
+    path = save_matches(matches, args.data, dataset_fp=dataset_fp)
     counts = matches["status"].value_counts()
     summary = ", ".join(f"{count} {status}" for status, count in counts.items())
-    print(f"Conciliação: {summary}. Resultado em {out / MATCHES_FILE}")
-    return 0
+    print(f"Conciliação: {summary}. Resultado em {path}")
 
 
-def _cmd_evaluate(args: argparse.Namespace) -> int:
-    dataset = _load_dataset(args.data)
-    if dataset is None:
-        return 2
-    matches_path = args.data / RESULTS_DIR / MATCHES_FILE
-    if not matches_path.exists():
-        message = f"erro: {matches_path} não existe. Rode 'bankrecon reconcile' antes."
-        print(message, file=sys.stderr)
-        return 2
-    matches = pd.read_csv(matches_path, keep_default_na=False, dtype={"invoice_ids": str})
-    matches["layer"] = pd.to_numeric(matches["layer"]).astype("Int64")
+def _cmd_detect(args: argparse.Namespace) -> None:
+    dataset, dataset_fp = _load_dataset(args.data)
+    matches = load_matches(args.data, dataset_fp=dataset_fp)
     try:
-        report = evaluate_reconciliation(matches, dataset.ground_truth)
+        scores = detect_anomalies(dataset.transactions, matches, dataset.suppliers)
     except ValueError as error:
-        message = f"erro: {error}. Rode 'bankrecon reconcile' de novo para estes dados."
-        print(message, file=sys.stderr)
-        return 2
-    print(render_reconciliation(report))
-    return 0
+        raise CommandError(str(error)) from error
+    path = save_scores(scores, args.data, dataset_fp=dataset_fp, matches_fp=fingerprint(matches))
+    print(f"Anomalias: {int(scores['high_risk'].sum())} transações de alto risco. Em {path}")
+
+
+def _cmd_evaluate(args: argparse.Namespace) -> None:
+    dataset, dataset_fp = _load_dataset(args.data)
+    truth = dataset.ground_truth
+    matches = load_matches(args.data, dataset_fp=dataset_fp)
+    scores = load_scores(args.data, dataset_fp=dataset_fp, matches_fp=fingerprint(matches))
+    sections = [
+        render_reconciliation(evaluate_reconciliation(matches, truth)),
+        render_anomalies(evaluate_anomalies(scores, truth)),
+    ]
+    print("\n\n".join(sections))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -98,19 +109,25 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--out", type=Path, default=DEFAULT_DATA_DIR)
     generate.set_defaults(handler=_cmd_generate)
 
-    reconcile_cmd = commands.add_parser("reconcile", help="concilia extrato e notas fiscais")
-    reconcile_cmd.add_argument("--data", type=Path, default=DEFAULT_DATA_DIR)
-    reconcile_cmd.set_defaults(handler=_cmd_reconcile)
-
-    evaluate = commands.add_parser("evaluate", help="compara os resultados com o gabarito")
-    evaluate.add_argument("--data", type=Path, default=DEFAULT_DATA_DIR)
-    evaluate.set_defaults(handler=_cmd_evaluate)
+    for name, handler, help_text in (
+        ("reconcile", _cmd_reconcile, "concilia extrato e notas fiscais"),
+        ("detect", _cmd_detect, "pontua transações incomuns e explica os motivos"),
+        ("evaluate", _cmd_evaluate, "compara os resultados com o gabarito"),
+    ):
+        command = commands.add_parser(name, help=help_text)
+        command.add_argument("--data", type=Path, default=DEFAULT_DATA_DIR)
+        command.set_defaults(handler=handler)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.handler(args)
+    try:
+        args.handler(args)
+    except (CommandError, ResultsMissingError, StaleResultsError) as error:
+        print(f"erro: {error}", file=sys.stderr)
+        return EXIT_USAGE
+    return 0
 
 
 if __name__ == "__main__":
