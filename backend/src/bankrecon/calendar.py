@@ -18,6 +18,13 @@ def roll_forward(day: date) -> date:
     return day
 
 
+def roll_back(day: date) -> date:
+    """Return ``day`` itself if it is a business day, otherwise the previous Friday."""
+    while is_weekend(day):
+        day -= timedelta(days=1)
+    return day
+
+
 def add_months(day: date, months: int) -> date:
     """First day of the month ``months`` after ``day``'s month."""
     index = day.year * 12 + (day.month - 1) + months

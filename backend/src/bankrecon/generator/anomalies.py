@@ -9,7 +9,7 @@ from enum import StrEnum
 
 import numpy as np
 
-from bankrecon.calendar import SATURDAY, roll_forward
+from bankrecon.calendar import SATURDAY, roll_back, roll_forward
 from bankrecon.generator.invoices import Invoice
 from bankrecon.generator.profiles import Frequency, SupplierProfile, build_profiles
 from bankrecon.generator.statement import Payment, bank_description
@@ -23,6 +23,10 @@ NEW_SUPPLIER_MAX_AGE_DAYS = 10
 NEW_SUPPLIER_WARMUP_DAYS = 30
 ATYPICAL_WEEKEND_SHARE = 0.6
 OFF_CYCLE_MONTHLY_SHIFT = (8, 15)
+OFF_CYCLE_WEEKLY_SHIFT = (1, 3)
+# Anomalies only move payments forward; targets are picked far enough from the period end
+# that the largest shift (monthly off-cycle plus a weekend roll) stays inside the period.
+END_MARGIN_DAYS = OFF_CYCLE_MONTHLY_SHIFT[1] + 2
 
 
 class AnomalyType(StrEnum):
@@ -56,8 +60,9 @@ class AnomalyInjector:
         self._used: set[int] = set()
 
     def inject(self, per_type: int) -> None:
-        # The new-supplier threshold is taken from the untouched amount distribution.
-        reference_amounts = [p.amount for p in self.payments]
+        # "High value" is measured against single invoices before any outlier inflates them;
+        # grouped payments would push the threshold up artificially.
+        reference_amounts = [inv.amount for inv in self.invoices]
         self._amount_outliers(per_type)
         self._duplicates(per_type)
         self._atypical_days(per_type)
@@ -66,16 +71,22 @@ class AnomalyInjector:
     def _pick(self, eligible: list[int], count: int) -> list[int]:
         candidates = [i for i in eligible if i not in self._used]
         if len(candidates) < count:
-            raise ValueError(f"not enough clean payments to inject {count} anomalies")
+            raise ValueError(
+                f"not enough eligible payments to inject {count} anomalies of one type; "
+                "use a longer period, more suppliers or fewer anomalies"
+            )
         picked = [int(i) for i in self.rng.choice(candidates, size=count, replace=False)]
         self._used.update(picked)
         return sorted(picked)
 
-    def _clean_indices(self, frequencies: set[Frequency]) -> list[int]:
+    def _clean_indices(self, frequencies: set[Frequency], *, shiftable: bool = False) -> list[int]:
+        latest = self.end - timedelta(days=END_MARGIN_DAYS)
         return [
             i
             for i, p in enumerate(self.payments)
-            if p.is_clean and self._profile_by_id[p.supplier_id].frequency in frequencies
+            if p.is_clean
+            and self._profile_by_id[p.supplier_id].frequency in frequencies
+            and (not shiftable or p.date <= latest)
         ]
 
     def _amount_outliers(self, count: int) -> None:
@@ -93,7 +104,7 @@ class AnomalyInjector:
             payment.anomaly = AnomalyType.AMOUNT_OUTLIER
 
     def _duplicates(self, count: int) -> None:
-        for i in self._pick(self._clean_indices(set(Frequency)), count):
+        for i in self._pick(self._clean_indices(set(Frequency), shiftable=True), count):
             original = self.payments[i]
             delay = timedelta(days=int(self.rng.integers(0, DUPLICATE_MAX_DELAY_DAYS + 1)))
             self.payments.append(
@@ -109,7 +120,7 @@ class AnomalyInjector:
             self._used.add(len(self.payments) - 1)
 
     def _atypical_days(self, count: int) -> None:
-        eligible = self._clean_indices({Frequency.WEEKLY, Frequency.MONTHLY})
+        eligible = self._clean_indices({Frequency.WEEKLY, Frequency.MONTHLY}, shiftable=True)
         for i in self._pick(eligible, count):
             payment = self.payments[i]
             if self.rng.random() < ATYPICAL_WEEKEND_SHARE:
@@ -121,15 +132,16 @@ class AnomalyInjector:
             payment.anomaly = AnomalyType.ATYPICAL_DAY
 
     def _off_cycle(self, payment: Payment) -> date:
+        """Business day outside the supplier's cycle, always after the original payment."""
         profile = self._profile_by_id[payment.supplier_id]
-        if profile.frequency is Frequency.MONTHLY:
-            shift = int(self.rng.integers(*OFF_CYCLE_MONTHLY_SHIFT))
-            return roll_forward(payment.date + timedelta(days=shift))
-        # Weekly: pay on another weekday of the same week.
-        assert profile.payment_day is not None
-        other_days = [d for d in range(5) if d != profile.payment_day]
-        weekday = int(self.rng.choice(other_days))
-        return payment.date + timedelta(days=weekday - payment.date.weekday())
+        low, high = (
+            OFF_CYCLE_MONTHLY_SHIFT
+            if profile.frequency is Frequency.MONTHLY
+            else OFF_CYCLE_WEEKLY_SHIFT
+        )
+        # Clean weekly payments sit on ``payment_day``; a 1-2 day shift (rolled past the
+        # weekend) never lands on the same weekday again.
+        return roll_forward(payment.date + timedelta(days=int(self.rng.integers(low, high))))
 
     def _new_suppliers(self, count: int, reference_amounts: list[float]) -> None:
         if count == 0:
@@ -159,8 +171,9 @@ class AnomalyInjector:
             self.profiles.append(profile)
             self._profile_by_id[profile.supplier_id] = profile
 
+            # Temporary id; the dataset renumbers all invoices in issue order afterwards.
             invoice = Invoice(
-                invoice_id=f"NF{next_invoice:05d}",
+                invoice_id=f"NEW{next_invoice:05d}",
                 supplier_id=profile.supplier_id,
                 issue_date=max(profile.registered_at, pay_date - timedelta(days=2)),
                 amount=amount,
@@ -180,7 +193,9 @@ class AnomalyInjector:
             )
 
     def _random_business_day(self, earliest: date) -> date:
-        """Business day in [earliest, end]; assumes the period has at least one."""
+        """Business day in [earliest, end]."""
+        if earliest > self.end:
+            raise ValueError("period too short for the new-supplier warm-up")
         span = (self.end - earliest).days
         day = roll_forward(earliest + timedelta(days=int(self.rng.integers(0, span + 1))))
-        return day if day <= self.end else roll_forward(earliest)
+        return day if day <= self.end else roll_back(self.end)

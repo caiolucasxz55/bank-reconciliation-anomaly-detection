@@ -80,7 +80,7 @@ def test_new_suppliers_are_registered_right_before_payment(dataset):
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"months": 0}, "months"),
+        ({"months": 2}, "months"),
         ({"n_suppliers": 2}, "n_suppliers"),
         ({"anomalies_per_type": -1}, "anomalies_per_type"),
     ],
@@ -88,3 +88,38 @@ def test_new_suppliers_are_registered_right_before_payment(dataset):
 def test_config_validation(kwargs, message):
     with pytest.raises(ValueError, match=message):
         GeneratorConfig(**kwargs)
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_invariants_hold_across_seeds(seed):
+    data = generate_dataset(GeneratorConfig(seed=seed))
+    dates = data.transactions["date"]
+    assert dates.min() >= pd.Timestamp("2025-01-01")
+    assert dates.max() <= pd.Timestamp("2025-12-31")
+
+    issue = data.invoices.set_index("invoice_id")["issue_date"]
+    truth = data.ground_truth.merge(data.transactions, on="transaction_id")
+    for row in truth[truth["invoice_ids"] != ""].itertuples():
+        latest_issue = max(issue[i] for i in row.invoice_ids.split(LIST_SEPARATOR))
+        assert row.date >= latest_issue, row.transaction_id
+
+
+def test_invoice_ids_follow_issue_order(dataset):
+    invoices = dataset.invoices
+    expected = [f"NF{i:05d}" for i in range(1, len(invoices) + 1)]
+    assert list(invoices["invoice_id"]) == expected
+    assert invoices["issue_date"].is_monotonic_increasing
+
+
+def test_shortest_supported_period():
+    data = generate_dataset(GeneratorConfig(months=3, start=pd.Timestamp("2025-02-01").date()))
+    assert data.transactions["date"].max() <= pd.Timestamp("2025-04-30")
+
+
+def test_supplier_profiles_round_trip(dataset, tmp_path):
+    dataset.save(tmp_path)
+    loaded = Dataset.load(tmp_path)
+    pd.testing.assert_frame_equal(
+        loaded.supplier_profiles, dataset.supplier_profiles, check_dtype=False
+    )
+    assert loaded.supplier_profiles["payment_day"].dtype == "Int64"

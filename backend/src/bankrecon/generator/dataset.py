@@ -12,9 +12,9 @@ import pandas as pd
 from bankrecon.calendar import add_months
 from bankrecon.generator.anomalies import AnomalyInjector
 from bankrecon.generator.config import GeneratorConfig
-from bankrecon.generator.invoices import generate_invoices
+from bankrecon.generator.invoices import Invoice, generate_invoices
 from bankrecon.generator.profiles import build_profiles
-from bankrecon.generator.statement import build_statement
+from bankrecon.generator.statement import Payment, build_statement
 
 LIST_SEPARATOR = ";"
 
@@ -70,8 +70,22 @@ class Dataset:
             ground_truth=pd.read_csv(
                 truth_dir / TRUTH_TRANSACTIONS_FILE, keep_default_na=False, dtype=str
             ),
-            supplier_profiles=pd.read_csv(truth_dir / TRUTH_PROFILES_FILE),
+            supplier_profiles=pd.read_csv(
+                truth_dir / TRUTH_PROFILES_FILE,
+                parse_dates=["registered_at"],
+                dtype={"payment_day": "Int64"},
+            ),
         )
+
+
+def _renumber_invoices(invoices: list[Invoice], payments: list[Payment]) -> None:
+    """Give invoices sequential ids in issue order and update the payments' references."""
+    invoices.sort(key=lambda inv: (inv.issue_date, inv.supplier_id))
+    new_ids = {inv.invoice_id: f"NF{i:05d}" for i, inv in enumerate(invoices, start=1)}
+    for invoice in invoices:
+        invoice.invoice_id = new_ids[invoice.invoice_id]
+    for payment in payments:
+        payment.invoice_ids = [new_ids[old] for old in payment.invoice_ids]
 
 
 def generate_dataset(config: GeneratorConfig | None = None) -> Dataset:
@@ -83,10 +97,11 @@ def generate_dataset(config: GeneratorConfig | None = None) -> Dataset:
 
     profiles = build_profiles(rng, config.n_suppliers, start, config.n_late_registered_suppliers)
     invoices = generate_invoices(profiles, rng, start, end)
-    payments = build_statement(profiles, invoices, config.noise, rng)
+    payments = build_statement(profiles, invoices, config.noise, rng, end)
     AnomalyInjector(
         rng, profiles=profiles, invoices=invoices, payments=payments, start=start, end=end
     ).inject(config.anomalies_per_type)
+    _renumber_invoices(invoices, payments)
 
     payments.sort(key=lambda p: (p.date, p.supplier_id, p.amount))
     transaction_ids = [f"TX{i:05d}" for i in range(1, len(payments) + 1)]
@@ -127,5 +142,7 @@ def generate_dataset(config: GeneratorConfig | None = None) -> Dataset:
     supplier_profiles = pd.DataFrame([asdict(p) for p in profiles])
     for column in ("frequency", "payment_method"):
         supplier_profiles[column] = supplier_profiles[column].map(str)
+    supplier_profiles["registered_at"] = pd.to_datetime(supplier_profiles["registered_at"])
+    supplier_profiles["payment_day"] = supplier_profiles["payment_day"].astype("Int64")
 
     return Dataset(suppliers, invoice_frame, transactions, ground_truth, supplier_profiles)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
@@ -13,14 +14,18 @@ DEFAULT_DATA_DIR = Path("data")
 
 
 def _cmd_generate(args: argparse.Namespace) -> int:
-    config = GeneratorConfig(
-        seed=args.seed,
-        start=args.start,
-        months=args.months,
-        n_suppliers=args.suppliers,
-        anomalies_per_type=args.anomalies_per_type,
-    )
-    dataset = generate_dataset(config)
+    try:
+        config = GeneratorConfig(
+            seed=args.seed,
+            start=args.start,
+            months=args.months,
+            n_suppliers=args.suppliers,
+            anomalies_per_type=args.anomalies_per_type,
+        )
+        dataset = generate_dataset(config)
+    except ValueError as error:
+        print(f"erro: {error}", file=sys.stderr)
+        return 2
     dataset.save(args.out)
     anomalies = (dataset.ground_truth["anomaly_type"] != "").sum()
     print(

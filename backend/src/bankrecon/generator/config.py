@@ -21,6 +21,11 @@ class NoiseConfig:
                 raise ValueError(f"{name} must be a probability, got {value}")
 
 
+# Anomalies need some payment history around them (supplier averages, a warm-up before new
+# suppliers appear), so shorter periods are rejected up front.
+MIN_MONTHS = 3
+
+
 @dataclass(frozen=True)
 class GeneratorConfig:
     seed: int = 42
@@ -32,8 +37,8 @@ class GeneratorConfig:
     noise: NoiseConfig = field(default_factory=NoiseConfig)
 
     def __post_init__(self) -> None:
-        if self.months < 1:
-            raise ValueError("months must be >= 1")
+        if self.months < MIN_MONTHS:
+            raise ValueError(f"months must be >= {MIN_MONTHS}")
         if self.n_suppliers < 4:
             raise ValueError("n_suppliers must be >= 4")
         if not 0 <= self.n_late_registered_suppliers < self.n_suppliers:

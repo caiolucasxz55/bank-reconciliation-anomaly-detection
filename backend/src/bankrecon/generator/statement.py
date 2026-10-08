@@ -91,8 +91,13 @@ def build_statement(
     invoices: list[Invoice],
     noise: NoiseConfig,
     rng: np.random.Generator,
+    end: date,
 ) -> list[Payment]:
-    """One payment per invoice (or per group of invoices), with noise applied."""
+    """One payment per invoice (or per group of invoices), with noise applied.
+
+    No payment is dated after ``end``: a late payment that would leave the period is
+    paid on schedule instead.
+    """
     by_supplier: dict[str, list[Invoice]] = {p.supplier_id: [] for p in profiles}
     for invoice in invoices:
         by_supplier[invoice.supplier_id].append(invoice)
@@ -101,7 +106,7 @@ def build_statement(
     for profile in profiles:
         own = sorted(by_supplier[profile.supplier_id], key=lambda inv: inv.scheduled_payment)
         for group in _group_invoices(own, profile, rng, noise.multi_invoice):
-            payments.append(_make_payment(profile, group, noise, rng))
+            payments.append(_make_payment(profile, group, noise, rng, end))
     return payments
 
 
@@ -110,6 +115,7 @@ def _make_payment(
     group: list[Invoice],
     noise: NoiseConfig,
     rng: np.random.Generator,
+    end: date,
 ) -> Payment:
     applied: list[NoiseType] = []
     if len(group) > 1:
@@ -117,8 +123,10 @@ def _make_payment(
 
     pay_date = max(inv.scheduled_payment for inv in group)
     if rng.random() < noise.late_payment:
-        pay_date = roll_forward(pay_date + timedelta(days=int(rng.integers(*LATE_PAYMENT_DAYS))))
-        applied.append(NoiseType.LATE_PAYMENT)
+        late = roll_forward(pay_date + timedelta(days=int(rng.integers(*LATE_PAYMENT_DAYS))))
+        if late <= end:
+            pay_date = late
+            applied.append(NoiseType.LATE_PAYMENT)
 
     amount = round(sum(inv.amount for inv in group), 2)
     if rng.random() < noise.bank_fee:
