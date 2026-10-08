@@ -74,7 +74,12 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
         return 2
     matches = pd.read_csv(matches_path, keep_default_na=False, dtype={"invoice_ids": str})
     matches["layer"] = pd.to_numeric(matches["layer"]).astype("Int64")
-    report = evaluate_reconciliation(matches, dataset.ground_truth)
+    try:
+        report = evaluate_reconciliation(matches, dataset.ground_truth)
+    except ValueError as error:
+        message = f"erro: {error}. Rode 'bankrecon reconcile' de novo para estes dados."
+        print(message, file=sys.stderr)
+        return 2
     print(render_reconciliation(report))
     return 0
 

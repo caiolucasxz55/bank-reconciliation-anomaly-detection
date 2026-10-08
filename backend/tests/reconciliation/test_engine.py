@@ -195,3 +195,74 @@ def test_reconcile_returns_frame_in_input_order():
 def test_config_validation(kwargs):
     with pytest.raises(ValueError):  # noqa: PT011
         ReconciliationConfig(**kwargs)
+
+
+def test_payment_is_never_matched_to_a_later_invoice():
+    result = _run(
+        _transactions(("T1", "2025-03-10", 900.00, "PIX ACME LOGISTICA E TRANSPORTES")),
+        _invoices(("NF1", "S1", "2025-03-12", 900.00)),
+    )
+    assert result["T1"].status is MatchStatus.UNMATCHED
+
+
+def test_duplicate_does_not_take_next_weeks_invoice_with_same_amount():
+    result = _run(
+        _transactions(
+            ("T1", "2025-03-03", 900.00, "PIX ACME LOGISTICA E TRANSPORTES"),
+            ("T2", "2025-03-06", 900.00, "PIX ACME LOGISTICA E TRANSPORTES"),  # duplicate
+            ("T3", "2025-03-10", 900.00, "PIX ACME LOGISTICA E TRANSPORTES"),
+        ),
+        _invoices(("NF1", "S1", "2025-03-03", 900.00), ("NF2", "S1", "2025-03-10", 900.00)),
+    )
+    assert result["T1"].invoice_ids == ("NF1",)
+    assert result["T2"].status is MatchStatus.UNMATCHED
+    assert result["T3"].invoice_ids == ("NF2",)
+
+
+def test_tolerant_layer_discards_weak_coincidences():
+    config = ReconciliationConfig(tolerant_min_confidence=0.95)
+    result = _run(
+        _transactions(("T1", "2025-03-12", 1490.00, "PIX ACME LOGIST TRANS LT")),
+        _invoices(("NF1", "S1", "2025-03-10", 1500.00)),
+        config,
+    )
+    assert result["T1"].status is MatchStatus.UNMATCHED
+
+
+def test_multi_invoice_prefers_oldest_open_invoices():
+    result = _run(
+        _transactions(
+            ("T1", "2025-03-20", 2000.00, "TED LUMEN CONSULTORIA EIRELI"),
+            ("T2", "2025-03-27", 2000.00, "TED LUMEN CONSULTORIA EIRELI"),
+        ),
+        _invoices(
+            ("NF1", "S2", "2025-03-01", 1000.00),
+            ("NF2", "S2", "2025-03-08", 1000.00),
+            ("NF3", "S2", "2025-03-15", 1000.00),
+            ("NF4", "S2", "2025-03-22", 1000.00),
+        ),
+    )
+    assert set(result["T1"].invoice_ids) == {"NF1", "NF2"}
+    assert set(result["T2"].invoice_ids) == {"NF3", "NF4"}
+
+
+def test_reconciler_can_run_twice_with_identical_results():
+    reconciler = Reconciler(SUPPLIERS)
+    transactions = _transactions(("T1", "2025-03-12", 1500.00, "PIX ACME LOGISTICA E TRANSPORTES"))
+    invoices = _invoices(("NF1", "S1", "2025-03-10", 1500.00))
+    assert reconciler.run(transactions, invoices) == reconciler.run(transactions, invoices)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"fee_tolerance": -1},
+        {"ambiguity_margin": -0.1},
+        {"tolerant_min_confidence": 0},
+        {"multi_max_candidates": 3},
+        {"exact_max_days": -1},
+    ],
+)
+def test_config_rejects_values_that_silently_break_layers(kwargs):
+    with pytest.raises(ValueError):  # noqa: PT011
+        ReconciliationConfig(**kwargs)

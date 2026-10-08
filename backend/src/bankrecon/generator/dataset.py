@@ -15,8 +15,7 @@ from bankrecon.generator.config import GeneratorConfig
 from bankrecon.generator.invoices import Invoice, generate_invoices
 from bankrecon.generator.profiles import build_profiles
 from bankrecon.generator.statement import Payment, build_statement
-
-LIST_SEPARATOR = ";"
+from bankrecon.schema import join_list
 
 SUPPLIERS_FILE = "suppliers.csv"
 INVOICES_FILE = "invoices.csv"
@@ -134,8 +133,8 @@ def generate_dataset(config: GeneratorConfig | None = None) -> Dataset:
         {
             "transaction_id": transaction_ids,
             "supplier_id": [p.supplier_id for p in payments],
-            "invoice_ids": [LIST_SEPARATOR.join(p.invoice_ids) for p in payments],
-            "noise": [LIST_SEPARATOR.join(n.value for n in p.noise) for p in payments],
+            "invoice_ids": [join_list(p.invoice_ids) for p in payments],
+            "noise": [join_list(n.value for n in p.noise) for p in payments],
             "anomaly_type": [str(p.anomaly or "") for p in payments],
         }
     )

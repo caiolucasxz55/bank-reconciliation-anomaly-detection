@@ -8,8 +8,8 @@ import pandas as pd
 
 from bankrecon.evaluation.tables import format_percent, to_markdown
 from bankrecon.reconciliation.models import Layer, MatchStatus
+from bankrecon.schema import LIST_SEPARATOR, split_list
 
-LIST_SEPARATOR = ";"
 LAYER_LABELS = {
     Layer.EXACT: "1. Exata",
     Layer.TOLERANT: "2. Tolerante",
@@ -25,7 +25,7 @@ NOISE_LABELS = {
 
 
 def _invoice_set(value: str) -> frozenset[str]:
-    return frozenset(value.split(LIST_SEPARATOR)) if value else frozenset()
+    return frozenset(split_list(value))
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,9 @@ def evaluate_reconciliation(
             {
                 "Status": status.value,
                 "Transações": len(rows),
-                "Participação": format_percent(len(rows) / len(frame)),
+                "Participação": format_percent(
+                    len(rows) / len(frame) if len(frame) else float("nan")
+                ),
                 "Corretas": int(rows["correct"].sum()),
             }
         )
@@ -105,7 +107,7 @@ def evaluate_reconciliation(
         by_layer=pd.DataFrame(by_layer),
         by_status=pd.DataFrame(by_status),
         by_noise=pd.DataFrame(by_noise),
-        accuracy=float(frame["correct"].mean()),
+        accuracy=float(frame["correct"].mean()) if len(frame) else float("nan"),
         matchable_recall=float(matchable["correct"].mean()) if len(matchable) else float("nan"),
     )
 

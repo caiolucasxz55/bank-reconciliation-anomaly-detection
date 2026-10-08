@@ -5,7 +5,7 @@ import pytest
 
 from bankrecon.generator import Dataset, GeneratorConfig, generate_dataset
 from bankrecon.generator.anomalies import AnomalyType
-from bankrecon.generator.dataset import LIST_SEPARATOR
+from bankrecon.schema import LIST_SEPARATOR
 
 
 def test_same_seed_generates_identical_data(dataset):

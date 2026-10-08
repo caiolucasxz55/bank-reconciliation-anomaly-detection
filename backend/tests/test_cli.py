@@ -41,3 +41,12 @@ def test_evaluate_without_results_fails_cleanly(tmp_path, capsys):
     assert main(["generate", "--months", "3", "--out", str(tmp_path)]) == 0
     assert main(["evaluate", "--data", str(tmp_path)]) == 2
     assert "bankrecon reconcile" in capsys.readouterr().err
+
+
+def test_evaluate_with_stale_results_fails_cleanly(tmp_path, capsys):
+    assert main(["generate", "--seed", "1", "--months", "6", "--out", str(tmp_path)]) == 0
+    assert main(["reconcile", "--data", str(tmp_path)]) == 0
+    assert main(["generate", "--seed", "1", "--months", "3", "--out", str(tmp_path)]) == 0
+    capsys.readouterr()
+    assert main(["evaluate", "--data", str(tmp_path)]) == 2
+    assert "reconcile" in capsys.readouterr().err

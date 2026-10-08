@@ -70,3 +70,8 @@ def test_missing_ground_truth_is_an_error():
 def test_to_markdown():
     table = to_markdown(pd.DataFrame({"a": [1, 2], "b": ["x", "y"]}))
     assert table.splitlines() == ["| a | b |", "| --- | --- |", "| 1 | x |", "| 2 | y |"]
+
+
+def test_empty_input_does_not_divide_by_zero():
+    report = evaluate_reconciliation(_matches(), _truth())
+    assert report.by_status["Participação"].tolist() == ["—", "—", "—"]
