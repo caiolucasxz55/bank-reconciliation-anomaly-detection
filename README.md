@@ -3,15 +3,178 @@
 Plataforma que concilia extratos bancários com notas fiscais e aponta transações incomuns
 para investigação humana.
 
-> Em construção. Veja a seção de status abaixo.
+O projeto se apoia em três pontos:
 
-## Desenvolvimento
+1. **Dados realistas.** Um gerador sintético cria uma empresa fictícia, com padrões de
+   pagamento e ruído do mundo real, e registra num gabarito tudo o que deveria ser
+   encontrado.
+2. **Conciliação que trata casos difíceis.** São três camadas (exata, tolerante e várias
+   notas para um pagamento), e cada transação sai com status e confiança.
+3. **Anomalias medidas e explicadas.** Um Isolation Forest sobre poucas features legíveis
+   gera o ranking, e essas mesmas features viram os motivos exibidos ao analista.
+
+> **O sistema não afirma que uma transação é fraude.** Ele indica o que merece
+> investigação humana. O score é mostrado como posição no ranking ("entre as 2% mais
+> incomuns") e **não é uma probabilidade de fraude**.
+
+## Como funciona
+
+```
+gerador ──► conciliação ──► anomalias ──► (API e página: em breve)
+   │             │              │
+   └─ gabarito ──┴──► avaliação ◄┘
+```
+
+| Etapa | O que faz |
+| --- | --- |
+| `generate` | 30 fornecedores com perfis (valor médio, variação, frequência semanal, mensal ou esporádica e dia típico de pagamento), 12 meses de notas e o extrato correspondente. Adiciona ruído (atraso, tarifa descontada, pagamento de várias notas, descrição abreviada como `PIX ACME LOGIST LT`) e injeta anomalias (duplicata, valor fora do padrão, fornecedor novo com valor alto, dia atípico). Com a mesma seed, gera sempre os mesmos dados. |
+| `reconcile` | **Camada 1, exata:** mesmo valor, nome prefixo do fornecedor, pagamento até 5 dias depois da nota. **Camada 2, tolerante:** tarifa de até R$ 15, nome comparado com `rapidfuzz` e atraso de até 30 dias. **Camada 3, várias notas:** combinações de notas abertas do mesmo fornecedor que somam o valor pago. Cada camada só vê o que as anteriores deixaram em aberto. |
+| `detect` | Calcula as features por pagamento: valor vs. típico do fornecedor, valor vs. mediana da empresa, intervalo curto desde o último pagamento, fornecedor novo, pagamento repetido, fim de semana e fora do ciclo. Depois roda o Isolation Forest, monta o ranking e escreve os motivos em português. |
+| `evaluate` | Compara os resultados com o gabarito e imprime as tabelas abaixo. |
+
+Cada transação conciliada sai com um destes status:
+
+- `conciliada`: casou na camada 1, ou nas camadas 2 e 3 com confiança alta e sem ambiguidade;
+- `sugerida`: casamento provável que aguarda aprovação humana;
+- `divergente`: nenhuma nota correspondente.
+
+Exemplos de motivos gerados:
+
+- *outro pagamento de mesmo valor ao mesmo fornecedor 2 dias antes*
+- *valor 5,0 vezes acima do normal para o fornecedor*
+- *fornecedor cadastrado há 10 dias* + *valor 25,6 vezes a mediana dos pagamentos da empresa*
+- *pago num sábado* + *fora do ciclo do fornecedor (normalmente pago às terças)*
+
+## Como rodar
+
+Requer Python 3.11+.
 
 ```bash
 cd backend
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-pytest
+cd ..
+
+bankrecon generate          # data/ com notas, extrato e gabarito (seed 42)
+bankrecon reconcile         # data/results/matches.csv
+bankrecon detect            # data/results/anomaly_scores.csv
+bankrecon evaluate          # tabelas de resultado em Markdown
+```
+
+Use `bankrecon generate --help` para trocar a seed, o período ou a quantidade de
+fornecedores e de anomalias. Cada resultado guarda uma impressão digital dos dados de
+entrada, e `detect` e `evaluate` se recusam a usar resultados gerados a partir de outros
+dados.
+
+## Resultados
+
+Números reais da seed 42 (608 transações, 658 notas, 32 anomalias injetadas, 8 de cada
+tipo), gerados por `bankrecon evaluate`.
+
+### Conciliação
+
+Acerto geral: **99,7%**, contando como acerto o conjunto exato de notas casadas ou a
+ausência correta de nota.
+
+| Camada | Transações | Corretas | Acerto |
+| --- | --- | --- | --- |
+| 1. Exata | 420 | 420 | 100% |
+| 2. Tolerante | 146 | 145 | 99% |
+| 3. Várias notas | 33 | 33 | 100% |
+
+| Status | Transações | Participação | Corretas |
+| --- | --- | --- | --- |
+| conciliada | 573 | 94% | 572 |
+| sugerida | 26 | 4% | 26 |
+| divergente | 9 | 1% | 8 |
+
+| Caso difícil | Transações | Acerto |
+| --- | --- | --- |
+| Sem ruído | 424 | 100% |
+| Pagamento atrasado | 51 | 100% |
+| Tarifa descontada | 40 | 98% |
+| Várias notas | 33 | 100% |
+| Descrição abreviada | 73 | 99% |
+
+### Anomalias
+
+"Alto risco" são as 5% transações de maior score (30). O top 10% tem 61 transações.
+
+| Tipo de anomalia | Injetadas | Recall (alto risco) | Recall (top 10%) |
+| --- | --- | --- | --- |
+| Pagamento duplicado | 8 | 100% | 100% |
+| Valor fora do padrão | 8 | 62% | 75% |
+| Fornecedor novo com valor alto | 8 | 100% | 100% |
+| Dia atípico | 8 | 62% | 62% |
+
+**Priorização:** a precisão nas 50 transações de maior score é de **54%**. Como há só 32
+anomalias, o máximo possível seria 64%. Escolhendo 50 transações ao acaso, o esperado
+seria cerca de 5%.
+
+Em outras seeds (1, 2 e 3) os números ficam na mesma faixa:
+
+- conciliação entre 99,7% e 100%;
+- recall no top 10%: 100% para duplicatas, 88–100% para valor fora do padrão, 100% para
+  fornecedor novo e 62% para dia atípico;
+- precisão@50 entre 52% e 56%.
+
+## Limitações
+
+- **Dia atípico tem o recall mais baixo.** Quando o pagamento atípico cai num fim de
+  semana, ele é quase sempre encontrado, porque nenhum pagamento normal cai em fim de
+  semana. Já o pagamento "fora do ciclo" num dia útil se parece com um pagamento atrasado
+  legítimo, que também sai do ciclo. As features não têm como distinguir os dois, e é por
+  isso que esse tipo fica perto de 60%.
+- **Valor fora do padrão perde para fornecedores muito variáveis.** Um valor 3× acima do
+  típico chama atenção num contrato fixo. Num fornecedor que já varia 25%, o mesmo valor
+  compete com outros sinais e às vezes cai abaixo do corte de alto risco. No top 10% o
+  recall sobe para 75–100%.
+- **Fornecedores legítimos recém-cadastrados geram falsos positivos.** "Fornecedor novo"
+  sozinho não é anomalia, e o gerador cria fornecedores legítimos cadastrados no meio do
+  ano. Os primeiros pagamentos deles aparecem no topo do ranking quando o valor também é
+  alto.
+- **Notas de mesmo valor podem trocar de dono.** Quando um fornecedor tem várias notas
+  abertas com valores quase iguais, um pagamento com tarifa ou atraso pode casar com a
+  nota de outro pagamento. Esses casos são raros (0–2 por seed) e costumam sair como
+  `sugerida`.
+- **Análise em lote.** As médias e os ciclos de cada fornecedor usam o ano inteiro, menos
+  o próprio pagamento avaliado. Num uso em produção, o histórico deveria olhar só para
+  trás.
+- **Dados sintéticos.** O realismo vem dos padrões, não de empresas reais. Os números
+  acima medem o sistema contra o próprio gerador e servem para comparar versões, não para
+  prometer desempenho em dados reais.
+
+## Estrutura
+
+```
+backend/
+  src/bankrecon/
+    generator/        perfis, notas, extrato com ruído, anomalias e gabarito
+    reconciliation/   resolução de fornecedor e as três camadas
+    anomalies/        features, Isolation Forest e motivos
+    evaluation/       métricas contra o gabarito e tabelas em Markdown
+    results.py        persistência dos resultados com impressão digital das entradas
+    cli.py            comandos generate, reconcile, detect e evaluate
+  tests/              testes unitários e de ponta a ponta (cobertura ~99%)
+```
+
+## Desenvolvimento
+
+```bash
+cd backend
+pytest --cov=bankrecon
 ruff check . && ruff format --check .
 ```
+
+O GitHub Actions roda lint e testes a cada push e pull request.
+
+## Status
+
+- [x] Etapa 1: gerador e gabarito
+- [x] Etapa 2: conciliação em camadas, com acerto medido
+- [x] Etapa 3: anomalias com score em ranking e motivos, com recall por tipo medido
+- [ ] Etapa 4: API em FastAPI, Postgres, página em Next.js e Docker Compose
+- [ ] Etapa 5: GIF da demo
+
+Depois do MVP: comparar o Isolation Forest com o LOF usando o mesmo gabarito.
