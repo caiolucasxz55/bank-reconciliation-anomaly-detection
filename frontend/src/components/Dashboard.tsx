@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { api, DEFAULT_FILTERS, type TransactionFilters } from "@/lib/api";
+import { api, DEFAULT_FILTERS, type TransactionDetail, type TransactionFilters } from "@/lib/api";
 import { useDebouncedValue, useResource } from "@/lib/hooks";
 import { DetailPanel } from "./DetailPanel";
 import { Filters } from "./Filters";
@@ -12,48 +12,65 @@ import styles from "./dashboard.module.css";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
+/** Offset of the last page that still has rows. */
+function lastPageOffset(total: number, limit: number): number {
+  return total === 0 ? 0 : Math.floor((total - 1) / limit) * limit;
+}
+
+function isTyping(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.matches("input, select, textarea");
+}
+
 export function Dashboard() {
   const [filters, setFilters] = useState<TransactionFilters>(DEFAULT_FILTERS);
-  const [search, setSearch] = useState("");
-  const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS);
+  const [searchInput, setSearchInput] = useState("");
+  const debouncedSearch = useDebouncedValue(searchInput, SEARCH_DEBOUNCE_MS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Bumped after a review so the totals, the list and the panel reload together.
+  // Bumped after a review or a retry so the totals and the list reload together.
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [reviewError, setReviewError] = useState<string>();
+  // Errors and results of reviews are tied to the transaction they belong to.
+  const [reviewError, setReviewError] = useState<{ id: string; message: string }>();
+  const [reviewed, setReviewed] = useState<TransactionDetail>();
 
-  const query: TransactionFilters = { ...filters, search: debouncedSearch };
+  // The search only applies (and goes back to the first page) once typing pauses.
+  if (debouncedSearch !== filters.search) {
+    setFilters({ ...filters, search: debouncedSearch, offset: 0 });
+  }
+
   const summary = useResource(`summary:${version}`, (signal) => api.summary(signal));
-  const page = useResource(JSON.stringify({ ...query, version }), (signal) =>
-    api.transactions(query, signal),
+  const page = useResource(JSON.stringify({ ...filters, version }), (signal) =>
+    api.transactions(filters, signal),
   );
-  const detail = useResource(selectedId && `${selectedId}:${version}`, (signal) =>
+  const detail = useResource(selectedId, (signal) =>
     api.transaction(selectedId as string, signal),
   );
 
-  // Any filter change goes back to the first page.
+  // A review can empty the last page; step back to the last page that has rows.
+  const loaded = page.data;
+  if (loaded && !page.loading && loaded.offset > 0 && loaded.offset >= loaded.total) {
+    const offset = lastPageOffset(loaded.total, loaded.limit);
+    if (offset !== filters.offset) setFilters({ ...filters, offset });
+  }
+
   const changeFilters = (change: Partial<TransactionFilters>) =>
     setFilters((current) => ({ ...current, offset: 0, ...change }));
 
-  const changeSearch = (value: string) => {
-    setSearch(value);
-    setFilters((current) => ({ ...current, offset: 0 }));
-  };
-
   const select = (id: string | null) => {
     setSelectedId(id);
-    setReviewError(undefined);
+    setReviewed(undefined);
   };
 
-  const review = async (action: "approve" | "reject") => {
-    if (!selectedId) return;
+  const review = async (id: string, action: "approve" | "reject") => {
     setBusy(true);
     setReviewError(undefined);
     try {
-      await api[action](selectedId);
+      // The response is the updated detail: show it instead of fetching it again.
+      setReviewed(await api[action](id));
       setVersion((v) => v + 1);
     } catch (error) {
-      setReviewError(error instanceof Error ? error.message : "Erro ao revisar a sugestão");
+      const message = error instanceof Error ? error.message : "Erro ao revisar a sugestão";
+      setReviewError({ id, message });
     } finally {
       setBusy(false);
     }
@@ -61,15 +78,25 @@ export function Dashboard() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedId(null);
+      // Escape inside a field belongs to the field (e.g. clearing the search box).
+      if (event.key === "Escape" && !isTyping(event.target)) {
+        setSelectedId(null);
+        setReviewed(undefined);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const loadError = summary.error ?? page.error;
-  // While a new transaction loads, do not show the previous one's details.
-  const shownDetail = detail.data?.transaction_id === selectedId ? detail.data : undefined;
+  const shownDetail =
+    reviewed?.transaction_id === selectedId
+      ? reviewed
+      : detail.data?.transaction_id === selectedId
+        ? detail.data
+        : undefined;
+  const panelError =
+    reviewError?.id === selectedId ? reviewError.message : shownDetail ? undefined : detail.error;
 
   return (
     <main className={styles.shell}>
@@ -83,20 +110,24 @@ export function Dashboard() {
 
       {loadError && (
         <div className={styles.error} role="alert">
-          Não foi possível carregar os dados: {loadError}
+          Não foi possível carregar os dados: {loadError}{" "}
+          <button type="button" className={styles.button} onClick={() => setVersion((v) => v + 1)}>
+            Tentar novamente
+          </button>
         </div>
       )}
 
       <SummaryCards summary={summary.data} filters={filters} onSelect={changeFilters} />
       <Filters
         filters={filters}
-        search={search}
-        onSearch={changeSearch}
+        search={searchInput}
+        onSearch={setSearchInput}
         onChange={changeFilters}
       />
       <TransactionTable
         page={page.data}
         loading={page.loading}
+        failed={page.error !== undefined}
         selectedId={selectedId}
         onSelect={select}
         onPage={(offset) => setFilters((current) => ({ ...current, offset }))}
@@ -105,11 +136,11 @@ export function Dashboard() {
       {selectedId && (
         <DetailPanel
           detail={shownDetail}
-          error={reviewError ?? detail.error}
-          busy={busy || detail.loading}
+          error={panelError}
+          busy={busy}
           onClose={() => select(null)}
-          onApprove={() => review("approve")}
-          onReject={() => review("reject")}
+          onApprove={() => review(selectedId, "approve")}
+          onReject={() => review(selectedId, "reject")}
         />
       )}
     </main>

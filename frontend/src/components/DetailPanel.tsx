@@ -18,7 +18,7 @@ export function DetailPanel({ detail, error, busy, onClose, onApprove, onReject 
     <aside className={styles.panel} aria-label="Detalhes da transação">
       <div className={styles.panelHeader}>
         <div>
-          <h2>{detail ? detail.transaction_id : "Carregando…"}</h2>
+          <h2>{detail ? detail.transaction_id : error ? "Transação" : "Carregando…"}</h2>
           {detail && <span className={styles.mono}>{detail.description}</span>}
         </div>
         <button type="button" className={styles.close} onClick={onClose} aria-label="Fechar">
@@ -61,8 +61,9 @@ export function DetailPanel({ detail, error, busy, onClose, onApprove, onReject 
             <p className={detail.high_risk ? styles.risk : undefined}>{detail.rank_label}</p>
             {detail.reasons.length > 0 ? (
               <ul className={styles.reasons}>
-                {detail.reasons.map((reason) => (
-                  <li key={reason}>{reason}</li>
+                {detail.reasons.map((reason, index) => (
+                  // Reasons are plain strings and may repeat; their position is stable.
+                  <li key={index}>{reason}</li>
                 ))}
               </ul>
             ) : (

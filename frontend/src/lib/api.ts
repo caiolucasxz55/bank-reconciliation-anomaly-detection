@@ -97,10 +97,10 @@ export function transactionQuery(filters: TransactionFilters): URLSearchParams {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    ...init,
-    headers: { Accept: "application/json", ...init?.headers },
-  });
+  // new Headers() accepts every HeadersInit shape (object, array or Headers).
+  const headers = new Headers(init?.headers);
+  headers.set("Accept", "application/json");
+  const response = await fetch(`/api${path}`, { ...init, headers });
   if (!response.ok) {
     let message = `Erro ${response.status} ao chamar a API`;
     try {

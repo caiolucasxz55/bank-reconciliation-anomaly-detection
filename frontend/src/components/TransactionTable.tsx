@@ -6,12 +6,14 @@ import styles from "./dashboard.module.css";
 interface Props {
   page: TransactionPage | undefined;
   loading: boolean;
+  /** The first load failed: show that instead of a loading placeholder. */
+  failed: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onPage: (offset: number) => void;
 }
 
-export function TransactionTable({ page, loading, selectedId, onSelect, onPage }: Props) {
+export function TransactionTable({ page, loading, failed, selectedId, onSelect, onPage }: Props) {
   const items = page?.items ?? [];
   return (
     <div className={styles.tableWrap} aria-busy={loading}>
@@ -58,7 +60,11 @@ export function TransactionTable({ page, loading, selectedId, onSelect, onPage }
       {page && items.length === 0 && (
         <div className={styles.empty}>Nenhuma transação com esses filtros.</div>
       )}
-      {!page && <div className={styles.empty}>Carregando transações…</div>}
+      {!page && (
+        <div className={styles.empty}>
+          {failed ? "Lista indisponível no momento." : "Carregando transações…"}
+        </div>
+      )}
       {page && page.total > 0 && (
         <div className={styles.pager}>
           <span>{pageRange(page.offset, items.length, page.total)}</span>

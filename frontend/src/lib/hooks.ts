@@ -27,7 +27,9 @@ export function useResource<T>(
     if (key === null) return;
     const controller = new AbortController();
     run(controller.signal).then(
-      (data) => setState({ key, data }),
+      (data) => {
+        if (!controller.signal.aborted) setState({ key, data });
+      },
       (error: unknown) => {
         if (controller.signal.aborted) return;
         const message = error instanceof Error ? error.message : "Erro inesperado";
