@@ -137,3 +137,27 @@ def test_only_suggestions_can_be_reviewed(session_factory, pipeline, action):
 def test_review_unknown_transaction(session_factory, action):
     with session_factory() as session, pytest.raises(TransactionNotFoundError):
         action(session, "TX99999")
+
+
+@pytest.mark.parametrize("wildcard", ["%", "_", "PIX%", "\\"])
+def test_search_treats_wildcards_literally(session_factory, wildcard):
+    with session_factory() as session:
+        _, total = repository.list_transactions(session, TransactionFilter(search=wildcard))
+    assert total == 0
+
+
+def test_second_review_of_the_same_suggestion_fails(session_factory, pipeline):
+    tx_id = _first_with_status(pipeline, "sugerida")
+    first, second = session_factory(), session_factory()
+    try:
+        repository.approve(first, tx_id)
+        first.commit()
+        with pytest.raises(InvalidReviewError, match="conciliada"):
+            repository.reject(second, tx_id)
+    finally:
+        first.close()
+        second.close()
+    with session_factory() as session:
+        match = session.get(Match, tx_id)
+        assert match.status == "conciliada"
+        assert match.invoices

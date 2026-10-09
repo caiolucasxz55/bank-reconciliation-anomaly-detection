@@ -5,10 +5,12 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pandas as pd
-from sqlalchemy import delete, insert, select
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session
 
 from bankrecon.db.models import (
+    DECIDED_BY_ANALYST,
+    DECIDED_BY_SYSTEM,
     AnomalyScore,
     BankTransaction,
     Invoice,
@@ -37,8 +39,20 @@ def _date(value) -> object:
     return pd.Timestamp(value).date()
 
 
+class ReviewsWouldBeLostError(RuntimeError):
+    """Reloading would erase decisions made by an analyst."""
+
+    def __init__(self, count: int) -> None:
+        super().__init__(f"o banco tem {count} revisões feitas por analistas")
+        self.count = count
+
+
 def is_loaded(session: Session) -> bool:
     return session.scalar(select(BankTransaction.transaction_id).limit(1)) is not None
+
+
+def analyst_reviews(session: Session) -> int:
+    return session.scalar(select(func.count()).where(Match.decided_by == DECIDED_BY_ANALYST)) or 0
 
 
 def load_results(
@@ -49,11 +63,16 @@ def load_results(
     transactions: pd.DataFrame,
     matches: pd.DataFrame,
     scores: pd.DataFrame,
+    discard_reviews: bool = False,
 ) -> None:
     """Replace everything in the database with this dataset and its results.
 
-    Runs in the caller's transaction; nothing is visible until it commits.
+    Refuses (``ReviewsWouldBeLostError``) when analysts already approved or rejected
+    suggestions, unless ``discard_reviews`` is set. Runs in the caller's transaction;
+    nothing is visible until it commits.
     """
+    if not discard_reviews and (count := analyst_reviews(session)):
+        raise ReviewsWouldBeLostError(count)
     for table in _TABLES_IN_DELETE_ORDER:
         session.execute(delete(table))
 
@@ -102,7 +121,7 @@ def load_results(
                 "layer": None if pd.isna(r.layer) else int(r.layer),
                 "confidence": float(r.confidence),
                 "supplier_id": r.supplier_id or None,
-                "decided_by": "sistema",
+                "decided_by": DECIDED_BY_SYSTEM,
             }
             for r in matches.itertuples(index=False)
         ],

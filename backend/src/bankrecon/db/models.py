@@ -18,6 +18,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 MONEY = Numeric(14, 2)
+# Who made the current decision on a match.
+DECIDED_BY_SYSTEM = "sistema"
+DECIDED_BY_ANALYST = "analista"
 
 
 class Base(DeclarativeBase):
@@ -82,8 +85,7 @@ class Match(Base):
     confidence: Mapped[float]
     # Supplier the description resolves to; set even when no invoice matched.
     supplier_id: Mapped[str | None] = mapped_column(ForeignKey("suppliers.supplier_id"))
-    # "sistema" for the reconciliation engine, "analista" after a human decision.
-    decided_by: Mapped[str] = mapped_column(String(16), default="sistema")
+    decided_by: Mapped[str] = mapped_column(String(16), default=DECIDED_BY_SYSTEM)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     transaction: Mapped[BankTransaction] = relationship(back_populates="match")

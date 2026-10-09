@@ -6,13 +6,19 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import Select, func, select
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy import Select, delete, func, select, update
+from sqlalchemy.orm import Session, contains_eager, joinedload
 
-from bankrecon.db.models import AnomalyScore, BankTransaction, Match
+from bankrecon.db.models import (
+    DECIDED_BY_ANALYST,
+    AnomalyScore,
+    BankTransaction,
+    Match,
+    match_invoices,
+)
 from bankrecon.reconciliation.models import MatchStatus
 
-ANALYST = "analista"
+LIKE_ESCAPE = "\\"
 
 
 class TransactionNotFoundError(LookupError):
@@ -64,6 +70,13 @@ def summary(session: Session) -> Summary:
     )
 
 
+def _escape_like(text: str) -> str:
+    """Make ``%`` and ``_`` in user input match literally."""
+    for char in (LIKE_ESCAPE, "%", "_"):
+        text = text.replace(char, LIKE_ESCAPE + char)
+    return text
+
+
 def _filtered(query: Select, filters: TransactionFilter) -> Select:
     if filters.status is not None:
         query = query.where(Match.status == filters.status.value)
@@ -72,10 +85,10 @@ def _filtered(query: Select, filters: TransactionFilter) -> Select:
     if filters.high_risk_only:
         query = query.where(AnomalyScore.high_risk)
     if filters.search:
-        pattern = f"%{filters.search.strip()}%"
+        pattern = f"%{_escape_like(filters.search.strip())}%"
         query = query.where(
-            BankTransaction.description.ilike(pattern)
-            | BankTransaction.transaction_id.ilike(pattern)
+            BankTransaction.description.ilike(pattern, escape=LIKE_ESCAPE)
+            | BankTransaction.transaction_id.ilike(pattern, escape=LIKE_ESCAPE)
         )
     return query
 
@@ -97,15 +110,16 @@ def list_transactions(
     )
     total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
     page = (
+        # Reuse the joins already made for filtering instead of joining again.
         base.options(
-            joinedload(BankTransaction.match).joinedload(Match.supplier),
-            joinedload(BankTransaction.anomaly),
+            contains_eager(BankTransaction.match).joinedload(Match.supplier),
+            contains_eager(BankTransaction.anomaly),
         )
         .order_by(*_ORDER[filters.sort])
         .limit(filters.limit)
         .offset(filters.offset)
     )
-    return list(session.scalars(page).unique()), total
+    return list(session.scalars(page)), total
 
 
 def get_transaction(session: Session, transaction_id: str) -> BankTransaction:
@@ -123,36 +137,44 @@ def get_transaction(session: Session, transaction_id: str) -> BankTransaction:
     return transaction
 
 
-def _suggested_match(session: Session, transaction_id: str) -> Match:
-    match = session.scalar(
-        select(Match)
-        .where(Match.transaction_id == transaction_id)
-        .options(selectinload(Match.invoices))
-        .with_for_update()
-    )
-    if match is None:
-        raise TransactionNotFoundError(transaction_id)
-    if match.status != MatchStatus.SUGGESTED.value:
-        raise InvalidReviewError(
-            f"a transação {transaction_id} está '{match.status}'; só sugestões podem ser revisadas"
+def _claim_suggestion(session: Session, transaction_id: str, **values) -> None:
+    """Atomically move a match out of 'sugerida' with one conditional UPDATE.
+
+    Two concurrent reviews of the same suggestion cannot both succeed: the second one
+    finds the status already changed and fails with ``InvalidReviewError``. This works
+    the same on SQLite (which ignores ``SELECT ... FOR UPDATE``) and on Postgres.
+    """
+    result = session.execute(
+        update(Match)
+        .where(
+            Match.transaction_id == transaction_id,
+            Match.status == MatchStatus.SUGGESTED.value,
         )
-    return match
+        .values(decided_by=DECIDED_BY_ANALYST, decided_at=datetime.now(UTC), **values)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount == 1:
+        return
+    current = session.scalar(select(Match.status).where(Match.transaction_id == transaction_id))
+    if current is None:
+        raise TransactionNotFoundError(transaction_id)
+    raise InvalidReviewError(
+        f"a transação {transaction_id} está '{current}'; só sugestões podem ser revisadas"
+    )
 
 
 def approve(session: Session, transaction_id: str) -> None:
     """Confirm a suggested match: it becomes reconciled, decided by the analyst."""
-    match = _suggested_match(session, transaction_id)
-    match.status = MatchStatus.RECONCILED.value
-    match.decided_by = ANALYST
-    match.decided_at = datetime.now(UTC)
+    _claim_suggestion(session, transaction_id, status=MatchStatus.RECONCILED.value)
 
 
 def reject(session: Session, transaction_id: str) -> None:
     """Refuse a suggested match: its invoices go back to open and it becomes unmatched."""
-    match = _suggested_match(session, transaction_id)
-    match.invoices.clear()
-    match.status = MatchStatus.UNMATCHED.value
-    match.layer = None
-    match.confidence = 0.0
-    match.decided_by = ANALYST
-    match.decided_at = datetime.now(UTC)
+    _claim_suggestion(
+        session,
+        transaction_id,
+        status=MatchStatus.UNMATCHED.value,
+        layer=None,
+        confidence=0.0,
+    )
+    session.execute(delete(match_invoices).where(match_invoices.c.transaction_id == transaction_id))

@@ -1,8 +1,10 @@
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import func, select
 
-from bankrecon.db.load import is_loaded, load_results
+from bankrecon.db import repository
+from bankrecon.db.load import ReviewsWouldBeLostError, is_loaded, load_results
 from bankrecon.db.models import (
     AnomalyScore,
     BankTransaction,
@@ -66,3 +68,33 @@ def test_empty_database_is_not_loaded():
     create_schema(engine)
     with make_session_factory(engine)() as session:
         assert not is_loaded(session)
+
+
+def _reload(session_factory, pipeline, **kwargs):
+    data = pipeline.dataset
+    with session_factory.begin() as session:
+        load_results(
+            session,
+            suppliers=data.suppliers,
+            invoices=data.invoices,
+            transactions=data.transactions,
+            matches=pipeline.matches,
+            scores=pipeline.scores,
+            **kwargs,
+        )
+
+
+def test_reload_refuses_to_erase_analyst_reviews(session_factory, pipeline):
+    tx_id = pipeline.matches.loc[pipeline.matches["status"] == "sugerida", "transaction_id"].iloc[0]
+    with session_factory.begin() as session:
+        repository.approve(session, tx_id)
+
+    with pytest.raises(ReviewsWouldBeLostError) as info:
+        _reload(session_factory, pipeline)
+    assert info.value.count == 1
+    with session_factory() as session:
+        assert session.get(Match, tx_id).decided_by == "analista"
+
+    _reload(session_factory, pipeline, discard_reviews=True)
+    with session_factory() as session:
+        assert session.get(Match, tx_id).decided_by == "sistema"

@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from bankrecon.api.app import create_app
+from bankrecon.db.models import Match
 
 
 @pytest.fixture
@@ -126,3 +127,19 @@ def test_review_unknown_transaction(client, action):
 def test_cors_allows_the_web_origin(client):
     response = client.get("/api/summary", headers={"Origin": "http://localhost:3000"})
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+def test_review_is_committed_before_the_response(client, session_factory, pipeline):
+    tx_id = _first_with_status(pipeline, "sugerida")
+    assert client.post(f"/api/transactions/{tx_id}/approve").status_code == 200
+    with session_factory() as session:
+        assert session.get(Match, tx_id).status == "conciliada"
+
+
+def test_failed_review_changes_nothing(client, session_factory, pipeline):
+    tx_id = _first_with_status(pipeline, "conciliada")
+    assert client.post(f"/api/transactions/{tx_id}/reject").status_code == 409
+    with session_factory() as session:
+        match = session.get(Match, tx_id)
+        assert match.status == "conciliada"
+        assert match.invoices

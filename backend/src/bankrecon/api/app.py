@@ -35,9 +35,11 @@ DEFAULT_CORS_ORIGINS = "http://localhost:3000"
 
 
 def get_session(request: Request) -> Iterator[Session]:
-    """One session per request, committed on success and rolled back on error."""
+    """One session per request. Writes commit explicitly *before* the response is built
+    (dependency teardown runs after the response is sent); anything uncommitted is
+    rolled back when the session closes."""
     factory: sessionmaker[Session] = request.app.state.session_factory
-    with factory.begin() as session:
+    with factory() as session:
         yield session
 
 
@@ -104,8 +106,7 @@ def _review(session: Session, transaction_id: str, action) -> TransactionDetailO
         raise HTTPException(status.HTTP_404_NOT_FOUND, "transação não encontrada") from error
     except InvalidReviewError as error:
         raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
-    session.flush()
-    session.expire_all()
+    session.commit()
     return _detail(session, transaction_id)
 
 

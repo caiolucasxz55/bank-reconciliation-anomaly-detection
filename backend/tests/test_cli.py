@@ -1,8 +1,10 @@
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from bankrecon.cli import main
-from bankrecon.db.session import make_engine
+from bankrecon.db import repository
+from bankrecon.db.models import Match
+from bankrecon.db.session import make_engine, make_session_factory
 from bankrecon.generator import Dataset
 
 
@@ -138,3 +140,33 @@ def test_unreachable_database_fails_cleanly(data_dir, capsys):
     url = "postgresql+psycopg://user:pass@127.0.0.1:1/none?connect_timeout=1"
     assert main(["demo", "--data", str(data_dir), "--database-url", url]) == 2
     assert "não foi possível acessar o banco" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("no_database_env")
+def test_load_db_protects_analyst_reviews(data_dir, capsys):
+    data = str(data_dir)
+    for step in ("reconcile", "detect", "load-db"):
+        assert main([step, "--data", data]) == 0
+    url = f"sqlite:///{(data_dir / 'bankrecon.db').as_posix()}"
+    engine = make_engine(url)
+    with make_session_factory(engine).begin() as session:
+        match = session.scalar(select(Match).where(Match.status == "sugerida").limit(1))
+        repository.approve(session, match.transaction_id)
+    engine.dispose()
+    capsys.readouterr()
+
+    assert main(["load-db", "--data", data]) == 2
+    assert "--discard-reviews" in capsys.readouterr().err
+    assert main(["load-db", "--data", data, "--discard-reviews"]) == 0
+
+
+@pytest.mark.usefixtures("no_database_env")
+def test_demo_force_regenerates_with_the_requested_seed(tmp_path, capsys):
+    data = tmp_path / "demo"
+    assert main(["generate", "--seed", "1", "--months", "3", "--out", str(data)]) == 0
+    assert main(["demo", "--data", str(data)]) == 0
+    assert "Usando os dados" in capsys.readouterr().out
+    assert _transaction_count(data / "bankrecon.db") < 300  # the 3-month dataset
+
+    assert main(["demo", "--data", str(data), "--seed", "2", "--force"]) == 0
+    assert _transaction_count(data / "bankrecon.db") > 500  # regenerated, 12 months
