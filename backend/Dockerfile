@@ -6,20 +6,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore \
     BANKRECON_DATA_DIR=/app/data
 
 WORKDIR /app
 
-# Dependencies change less often than the code: install them in their own layer.
-COPY pyproject.toml ./
-RUN python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" > requirements.txt \
-    && pip install -r requirements.txt
+# Pinned dependencies change less often than the code: install them in their own layer.
+COPY requirements.lock ./
+RUN pip install -r requirements.lock
 
+COPY pyproject.toml ./
 COPY src ./src
 RUN pip install --no-deps .
 
 RUN useradd --create-home --uid 10001 app && mkdir -p /app/data && chown app /app/data
 USER app
+# Generated data and pipeline results; a named volume keeps them next to the database.
+VOLUME ["/app/data"]
 
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=60s --retries=5 \

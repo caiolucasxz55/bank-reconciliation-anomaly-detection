@@ -17,9 +17,12 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: backend/pyproject.toml
+          cache-dependency-path: |
+            backend/pyproject.toml
+            backend/requirements.lock
       - name: Install
-        run: pip install -e ".[dev]"
+        # The same pinned versions as the Docker image.
+        run: pip install -c requirements.lock -e ".[dev]"
       - name: Lint
         run: |
           ruff check .
@@ -57,8 +60,16 @@ jobs:
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
-      - name: Build images
-        run: docker compose build
+      - uses: docker/setup-buildx-action@v3
+      - name: Build images (layers cached between runs)
+        uses: docker/bake-action@v6
+        with:
+          source: .
+          files: docker-compose.yml
+          load: true
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
       - name: Start the demo and check the API through the web server
         run: |
           docker compose up -d --wait
