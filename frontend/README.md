@@ -8,9 +8,9 @@ Página única em Next.js com:
 - um painel lateral com os motivos do score, as notas casadas e os botões de aprovar ou
   rejeitar uma sugestão.
 
-O navegador chama `/api/*` no próprio Next, e um rewrite repassa essas chamadas para a
-API FastAPI em `API_URL` (padrão `http://localhost:8000`). Os rewrites são resolvidos no
-build, então na imagem Docker `API_URL` é um argumento de build.
+O navegador chama `/api/*` no próprio Next, e o route handler `src/app/api/[...path]`
+repassa essas chamadas para a API FastAPI em `API_URL` (padrão `http://localhost:8000`).
+A variável é lida a cada requisição, então a mesma imagem funciona com qualquer endereço.
 
 ```bash
 npm install
