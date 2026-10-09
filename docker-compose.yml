@@ -1,0 +1,42 @@
+# Full demo: `docker compose up`, then open http://localhost:3000.
+# On first start the API generates the synthetic data, runs the pipeline and loads Postgres.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bankrecon
+      POSTGRES_PASSWORD: bankrecon
+      POSTGRES_DB: bankrecon
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bankrecon -d bankrecon"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://bankrecon:bankrecon@db:5432/bankrecon
+      CORS_ORIGINS: http://localhost:${WEB_PORT:-3000}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      # Host ports are configurable in case 8000 or 3000 are taken: API_PORT=8010 ...
+      - "${API_PORT:-8000}:8000"
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+volumes:
+  pgdata:
