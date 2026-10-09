@@ -20,7 +20,7 @@ O projeto se apoia em três pontos:
 ## Como funciona
 
 ```
-gerador ──► conciliação ──► anomalias ──► (API e página: em breve)
+gerador ──► conciliação ──► anomalias ──► Postgres ──► API (FastAPI) ──► página (Next.js)
    │             │              │
    └─ gabarito ──┴──► avaliação ◄┘
 ```
@@ -47,6 +47,47 @@ Exemplos de motivos gerados:
 
 ## Como rodar
 
+### Demo completa com Docker
+
+```bash
+docker compose up --build
+```
+
+Abra http://localhost:3000. Na primeira subida, a API gera os dados sintéticos, roda a
+conciliação e a detecção e carrega o Postgres. Nas subidas seguintes, ela reaproveita o
+banco, e as revisões feitas na página são mantidas. A documentação interativa da API fica
+em http://localhost:8000/docs.
+
+Se as portas 3000 ou 8000 já estiverem em uso, troque as portas do host:
+
+```bash
+WEB_PORT=3010 API_PORT=8010 docker compose up --build
+```
+
+A página mostra:
+
+- os totais no topo (conciliadas, sugeridas, divergentes e alto risco), que também
+  funcionam como filtro;
+- a lista de transações, com filtros por status e por faixa de score, busca e ordenação;
+- um painel lateral com a posição no ranking, os motivos, as notas casadas e os botões
+  para aprovar ou rejeitar uma sugestão.
+
+### API
+
+| Método | Rota | O que faz |
+| --- | --- | --- |
+| `GET` | `/api/summary` | Totais por status e quantidade de alto risco |
+| `GET` | `/api/transactions` | Lista paginada com os filtros `status`, `high_risk`, `max_percentile` (0.1 = top 10%), `q` (busca na descrição ou no ID), `sort` (`risco`, `data` ou `valor`), `limit` e `offset` |
+| `GET` | `/api/transactions/{id}` | Detalhe com todos os motivos e as notas casadas |
+| `POST` | `/api/transactions/{id}/approve` | Confirma uma sugestão (`409` se não for `sugerida`) |
+| `POST` | `/api/transactions/{id}/reject` | Rejeita uma sugestão; as notas voltam a ficar em aberto |
+
+O banco tem as tabelas `suppliers`, `invoices`, `bank_transactions`, `matches` (com a
+camada, a confiança e quem decidiu: `sistema` ou `analista`), `match_invoices` (as notas
+de cada transação) e `anomaly_scores`.
+
+### Pipeline em Python, sem Docker
+
 Requer Python 3.11+.
 
 ```bash
@@ -66,6 +107,17 @@ Use `bankrecon generate --help` para trocar a seed, o período ou a quantidade d
 fornecedores e de anomalias. Cada resultado guarda uma impressão digital dos dados de
 entrada, e `detect` e `evaluate` se recusam a usar resultados gerados a partir de outros
 dados.
+
+Para servir a API localmente sobre SQLite:
+
+```bash
+bankrecon demo                                            # gera, processa e carrega data/bankrecon.db
+uvicorn --factory bankrecon.api.app:create_app --port 8000
+cd frontend && npm install && npm run dev                 # http://localhost:3000
+```
+
+`bankrecon load-db` recarrega o banco a partir dos resultados. Ele se recusa a apagar
+revisões feitas por analistas, a menos que receba `--discard-reviews`.
 
 ## Resultados
 
@@ -144,6 +196,13 @@ Em outras seeds (1, 2 e 3) os números ficam na mesma faixa:
 - **Dados sintéticos.** O realismo vem dos padrões, não de empresas reais. Os números
   acima medem o sistema contra o próprio gerador e servem para comparar versões, não para
   prometer desempenho em dados reais.
+- **O score não é recalculado depois de uma revisão.** O ranking é calculado em lote, na
+  execução do pipeline. Quando um analista aprova ou rejeita uma sugestão, o status muda,
+  mas a posição no ranking e os motivos continuam os da última execução.
+- **Sem migrações de banco.** O MVP cria as tabelas na subida (`create_all`). Uma segunda
+  versão do esquema pediria migrações com Alembic.
+- **Sem autenticação.** Qualquer pessoa com acesso à página pode aprovar ou rejeitar
+  sugestões. O campo `decided_by` registra apenas "analista", sem identificar a pessoa.
 
 ## Estrutura
 
@@ -154,9 +213,15 @@ backend/
     reconciliation/   resolução de fornecedor e as três camadas
     anomalies/        features, Isolation Forest e motivos
     evaluation/       métricas contra o gabarito e tabelas em Markdown
+    db/               modelos SQLAlchemy, carga do banco, consultas e revisões
+    api/              aplicação FastAPI (o ML roda como módulo, não como serviço)
     results.py        persistência dos resultados com impressão digital das entradas
-    cli.py            comandos generate, reconcile, detect e evaluate
-  tests/              testes unitários e de ponta a ponta (cobertura ~99%)
+    cli.py            generate, reconcile, detect, evaluate, load-db e demo
+  tests/              testes unitários, de API e de ponta a ponta
+frontend/
+  src/lib/            cliente tipado da API, formatação e hooks de dados
+  src/components/     totais, filtros, tabela e painel lateral (com testes)
+docker-compose.yml    Postgres, API e página
 ```
 
 ## Desenvolvimento
@@ -165,16 +230,20 @@ backend/
 cd backend
 pytest --cov=bankrecon
 ruff check . && ruff format --check .
+
+cd ../frontend
+npm test && npm run lint && npm run typecheck
 ```
 
-O GitHub Actions roda lint e testes a cada push e pull request.
+O GitHub Actions roda o lint e os testes do backend e do frontend, faz o build da página
+e sobe o `docker compose` para conferir que a página responde através da API.
 
 ## Status
 
 - [x] Etapa 1: gerador e gabarito
 - [x] Etapa 2: conciliação em camadas, com acerto medido
 - [x] Etapa 3: anomalias com score em ranking e motivos, com recall por tipo medido
-- [ ] Etapa 4: API em FastAPI, Postgres, página em Next.js e Docker Compose
+- [x] Etapa 4: API em FastAPI, Postgres, página em Next.js e Docker Compose
 - [ ] Etapa 5: GIF da demo
 
 Depois do MVP: comparar o Isolation Forest com o LOF usando o mesmo gabarito.
