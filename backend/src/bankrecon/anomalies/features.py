@@ -119,8 +119,11 @@ def compute_features(
     interval_ratio = frame["days_since_last"] / frame["usual_interval"].clip(lower=1)
     frame["short_interval"] = (1.0 - interval_ratio).clip(lower=0.0).fillna(0.0)
 
-    registered = suppliers.set_index("supplier_id")["registered_at"]
-    frame["supplier_age_days"] = (frame["date"] - frame["supplier_id"].map(registered)).dt.days
+    # A dict lookup (not Series.map with a Series) also works when there are no suppliers
+    # yet; to_datetime keeps the datetime dtype when nothing matches.
+    registered = dict(zip(suppliers["supplier_id"], suppliers["registered_at"], strict=True))
+    registered_at = pd.to_datetime(frame["supplier_id"].map(registered))
+    frame["supplier_age_days"] = (frame["date"] - registered_at).dt.days
     frame["is_new_supplier"] = (
         ~known | (frame["supplier_age_days"] <= config.new_supplier_days)
     ).astype(int)
