@@ -1,4 +1,7 @@
-"""Loads a dataset and its pipeline results into the database."""
+"""Loads a synthetic dataset and its pipeline results into the database (demo, evaluation).
+
+Real data goes through ``bankrecon.db.importer`` instead, which adds to what is there.
+"""
 
 from __future__ import annotations
 
@@ -10,15 +13,15 @@ from sqlalchemy.orm import Session
 
 from bankrecon.db.models import (
     DECIDED_BY_ANALYST,
-    DECIDED_BY_SYSTEM,
     AnomalyScore,
     BankTransaction,
+    ImportBatch,
     Invoice,
     Match,
     Supplier,
     match_invoices,
 )
-from bankrecon.schema import split_list
+from bankrecon.db.rows import insert_matches, insert_scores
 
 # Children first, so foreign keys are never violated while clearing.
 _TABLES_IN_DELETE_ORDER = (
@@ -28,6 +31,7 @@ _TABLES_IN_DELETE_ORDER = (
     BankTransaction.__table__,
     Invoice.__table__,
     Supplier.__table__,
+    ImportBatch.__table__,
 )
 
 
@@ -39,12 +43,18 @@ def _date(value) -> object:
     return pd.Timestamp(value).date()
 
 
-class ReviewsWouldBeLostError(RuntimeError):
-    """Reloading would erase decisions made by an analyst."""
+class DataWouldBeLostError(RuntimeError):
+    """Reloading would erase analyst decisions or imported files."""
 
-    def __init__(self, count: int) -> None:
-        super().__init__(f"o banco tem {count} revisões feitas por analistas")
-        self.count = count
+    def __init__(self, reviews: int, imports: int) -> None:
+        parts = []
+        if reviews:
+            parts.append(f"{reviews} revisões feitas por analistas")
+        if imports:
+            parts.append(f"{imports} arquivos importados")
+        super().__init__(f"o banco tem {' e '.join(parts)}")
+        self.reviews = reviews
+        self.imports = imports
 
 
 def is_loaded(session: Session) -> bool:
@@ -55,6 +65,10 @@ def analyst_reviews(session: Session) -> int:
     return session.scalar(select(func.count()).where(Match.decided_by == DECIDED_BY_ANALYST)) or 0
 
 
+def imported_files(session: Session) -> int:
+    return session.scalar(select(func.count()).select_from(ImportBatch)) or 0
+
+
 def load_results(
     session: Session,
     *,
@@ -63,16 +77,18 @@ def load_results(
     transactions: pd.DataFrame,
     matches: pd.DataFrame,
     scores: pd.DataFrame,
-    discard_reviews: bool = False,
+    replace_existing: bool = False,
 ) -> None:
     """Replace everything in the database with this dataset and its results.
 
-    Refuses (``ReviewsWouldBeLostError``) when analysts already approved or rejected
-    suggestions, unless ``discard_reviews`` is set. Runs in the caller's transaction;
-    nothing is visible until it commits.
+    Refuses (``DataWouldBeLostError``) when the database holds analyst decisions or
+    imported files, unless ``replace_existing`` is set. Runs in the caller's
+    transaction; nothing is visible until it commits.
     """
-    if not discard_reviews and (count := analyst_reviews(session)):
-        raise ReviewsWouldBeLostError(count)
+    if not replace_existing:
+        reviews, imports = analyst_reviews(session), imported_files(session)
+        if reviews or imports:
+            raise DataWouldBeLostError(reviews, imports)
     for table in _TABLES_IN_DELETE_ORDER:
         session.execute(delete(table))
 
@@ -112,39 +128,5 @@ def load_results(
             for r in transactions.itertuples(index=False)
         ],
     )
-    session.execute(
-        insert(Match),
-        [
-            {
-                "transaction_id": r.transaction_id,
-                "status": r.status,
-                "layer": None if pd.isna(r.layer) else int(r.layer),
-                "confidence": float(r.confidence),
-                "supplier_id": r.supplier_id or None,
-                "decided_by": DECIDED_BY_SYSTEM,
-            }
-            for r in matches.itertuples(index=False)
-        ],
-    )
-    links = [
-        {"transaction_id": r.transaction_id, "invoice_id": invoice_id}
-        for r in matches.itertuples(index=False)
-        for invoice_id in split_list(r.invoice_ids)
-    ]
-    if links:
-        session.execute(insert(match_invoices), links)
-    session.execute(
-        insert(AnomalyScore),
-        [
-            {
-                "transaction_id": r.transaction_id,
-                "score": float(r.score),
-                "rank": int(r.rank),
-                "percentile": float(r.percentile),
-                "rank_label": r.rank_label,
-                "high_risk": bool(r.high_risk),
-                "reasons": split_list(r.reasons),
-            }
-            for r in scores.itertuples(index=False)
-        ],
-    )
+    insert_matches(session, matches)
+    insert_scores(session, scores)

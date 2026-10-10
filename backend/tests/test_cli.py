@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from sqlalchemy import select, text
 
@@ -156,8 +158,8 @@ def test_load_db_protects_analyst_reviews(data_dir, capsys):
     capsys.readouterr()
 
     assert main(["load-db", "--data", data]) == 2
-    assert "--discard-reviews" in capsys.readouterr().err
-    assert main(["load-db", "--data", data, "--discard-reviews"]) == 0
+    assert "--replace" in capsys.readouterr().err
+    assert main(["load-db", "--data", data, "--replace"]) == 0
 
 
 @pytest.mark.usefixtures("no_database_env")
@@ -170,3 +172,63 @@ def test_demo_force_regenerates_with_the_requested_seed(tmp_path, capsys):
 
     assert main(["demo", "--data", str(data), "--seed", "2", "--force"]) == 0
     assert _transaction_count(data / "bankrecon.db") > 500  # regenerated, 12 months
+
+
+FIXTURES = Path(__file__).parent / "ingest" / "fixtures"
+
+
+@pytest.fixture
+def db_args(tmp_path):
+    return [
+        "--data",
+        str(tmp_path),
+        "--database-url",
+        f"sqlite:///{(tmp_path / 'r.db').as_posix()}",
+    ]
+
+
+def test_import_real_files_and_process(db_args, tmp_path, capsys):
+    invoices = [str(FIXTURES / n) for n in ("nfe_parcelada.xml", "nfe_a_vista.xml")]
+    assert main(["import-invoices", *invoices, *db_args]) == 0
+    out = capsys.readouterr().out
+    assert "3 importados" in out
+    assert "2 fornecedores novos" in out
+
+    assert main(["import-statement", str(FIXTURES / "extrato_v1.ofx"), *db_args]) == 0
+    out = capsys.readouterr().out
+    assert "3 importados, 0 já existiam, 1 créditos ignorados" in out
+    assert "Processadas 3 transações" in out
+
+    assert main(["import-statement", str(FIXTURES / "extrato_v1.ofx"), *db_args]) == 0
+    assert "0 importados, 3 já existiam" in capsys.readouterr().out
+    assert main(["process", *db_args]) == 0
+    assert "Processadas 3 transações" in capsys.readouterr().out
+
+
+def test_import_reports_row_warnings(db_args, capsys):
+    assert main(["import-statement", str(FIXTURES / "extrato.csv"), *db_args]) == 0
+    assert "aviso: linha 7: valor inválido" in capsys.readouterr().out
+
+
+def test_unreadable_statement_imports_nothing(db_args, tmp_path, capsys):
+    good, bad = FIXTURES / "extrato_v1.ofx", tmp_path / "extrato.pdf"
+    bad.write_bytes(b"%PDF")
+    assert main(["import-statement", str(good), str(bad), *db_args]) == 2
+    assert "extrato.pdf: formato não suportado" in capsys.readouterr().err
+    assert main(["process", *db_args]) == 0
+    assert "Processadas 0 transações" in capsys.readouterr().out  # all or nothing
+
+
+def test_missing_file_is_reported(db_args, tmp_path, capsys):
+    assert main(["import-invoices", str(tmp_path / "nao_existe.xml"), *db_args]) == 2
+    assert "não foi possível ler" in capsys.readouterr().err
+
+
+def test_import_invoices_fails_when_no_file_can_be_read(db_args, tmp_path, capsys):
+    bad = tmp_path / "notas.pdf"
+    bad.write_bytes(b"%PDF")
+    cancelled = FIXTURES / "nfe_cancelada.xml"
+    assert main(["import-invoices", str(bad), str(cancelled), *db_args]) == 2
+    err = capsys.readouterr().err
+    assert "nenhum arquivo pôde ser lido" in err
+    assert "notas.pdf" in err

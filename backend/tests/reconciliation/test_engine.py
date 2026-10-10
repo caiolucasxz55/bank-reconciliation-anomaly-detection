@@ -266,3 +266,14 @@ def test_reconciler_can_run_twice_with_identical_results():
 def test_config_rejects_values_that_silently_break_layers(kwargs):
     with pytest.raises(ValueError):  # noqa: PT011
         ReconciliationConfig(**kwargs)
+
+
+def test_payment_before_the_due_date_matches_when_after_the_issue_date():
+    invoices = _invoices(("NF1", "S1", "2025-05-05", 1500.00)).assign(
+        earliest_date=pd.Timestamp("2025-04-01")
+    )
+    early = _transactions(("T1", "2025-05-02", 1500.00, "PIX ACME LOGISTICA E TRANSPORTES"))
+    assert _run(early, invoices)["T1"].layer is Layer.EXACT
+
+    before_issue = _transactions(("T1", "2025-03-30", 1500.00, "PIX ACME LOGISTICA E TRANSPORTES"))
+    assert _run(before_issue, invoices)["T1"].status is MatchStatus.UNMATCHED

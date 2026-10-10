@@ -117,7 +117,7 @@ cd frontend && npm install && npm run dev                 # http://localhost:300
 ```
 
 `bankrecon load-db` recarrega o banco a partir dos resultados. Ele se recusa a apagar
-revisões feitas por analistas, a menos que receba `--discard-reviews`.
+revisões feitas por analistas nem dados importados, a menos que receba `--replace`.
 
 ## Resultados
 

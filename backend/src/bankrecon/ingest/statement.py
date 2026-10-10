@@ -94,6 +94,9 @@ def parse_ofx(content: bytes) -> ParseResult[StatementLine]:
             if not fitid:
                 key = (posted, amount, description)
                 fitid = "sem-fitid-" + short_hash(*key, occurrences.next(*key))
+            elif (seen := occurrences.next("fitid", fitid)) > 1:
+                # Some banks reuse a FITID inside one file; both lines are real payments.
+                fitid = f"{fitid}#{seen}"
             result.rows.append(StatementLine(f"ofx:{account}:{fitid}", posted, amount, description))
     if not result.rows and not result.errors:
         raise ParseError("nenhum lançamento encontrado no OFX")
