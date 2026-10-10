@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NFe xmlns="http://www.portalfiscal.inf.br/nfe">
+  <infNFe Id="NFe35250427865757000102550010000000881987654321" versao="4.00">
+    <ide>
+      <nNF>88</nNF>
+      <dhEmi>2025-04-08T09:00:00-03:00</dhEmi>
+    </ide>
+    <emit>
+      <CNPJ>27865757000102</CNPJ>
+      <xNome>Norte Transportes ME</xNome>
+    </emit>
+    <total>
+      <ICMSTot>
+        <vNF>845.90</vNF>
+      </ICMSTot>
+    </total>
+  </infNFe>
+</NFe>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+  <NFe>
+    <infNFe Id="NFe35250427865757000102550010000000901987654329" versao="4.00">
+      <ide>
+        <nNF>90</nNF>
+        <dhEmi>2025-04-09T09:00:00-03:00</dhEmi>
+      </ide>
+      <emit>
+        <CNPJ>27865757000102</CNPJ>
+        <xNome>Norte Transportes ME</xNome>
+      </emit>
+      <total>
+        <ICMSTot>
+          <vNF>120.00</vNF>
+        </ICMSTot>
+      </total>
+    </infNFe>
+  </NFe>
+  <protNFe versao="4.00">
+    <infProt>
+      <cStat>101</cStat>
+      <xMotivo>Cancelamento de NF-e homologado</xMotivo>
+    </infProt>
+  </protNFe>
+</nfeProc>

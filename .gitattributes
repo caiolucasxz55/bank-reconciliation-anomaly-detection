@@ -1,1 +1,5 @@
 * text=auto eol=lf
+
+# Sample bank/ERP files are kept byte-for-byte (CRLF, Windows-1252).
+backend/tests/ingest/fixtures/** -text
+frontend/public/modelos/** -text
