@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?OFX OFXHEADER="200" VERSION="220" SECURITY="NONE" OLDFILEUID="NONE" NEWFILEUID="NONE"?>
+<OFX>
+  <BANKMSGSRSV1>
+    <STMTTRNRS>
+      <STMTRS>
+        <CURDEF>BRL</CURDEF>
+        <BANKACCTFROM>
+          <BANKID>0341</BANKID>
+          <ACCTID>98765-4</ACCTID>
+          <ACCTTYPE>CHECKING</ACCTTYPE>
+        </BANKACCTFROM>
+        <BANKTRANLIST>
+          <DTSTART>20250501</DTSTART>
+          <DTEND>20250531</DTEND>
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20250505120000[-3:BRT]</DTPOSTED>
+            <TRNAMT>-1500.00</TRNAMT>
+            <FITID>A1B2C3</FITID>
+            <NAME>PIX ENVIADO</NAME>
+            <MEMO>ACME LOGISTICA E TRANSPORTES</MEMO>
+          </STMTTRN>
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20250506</DTPOSTED>
+            <TRNAMT>-87.35</TRNAMT>
+            <FITID>A1B2C4</FITID>
+            <MEMO>PAG BOLETO ENERGIA</MEMO>
+          </STMTTRN>
+        </BANKTRANLIST>
+      </STMTRS>
+    </STMTTRNRS>
+  </BANKMSGSRSV1>
+</OFX>

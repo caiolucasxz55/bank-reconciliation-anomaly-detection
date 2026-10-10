@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from bankrecon.cnpj import format_cnpj, with_check_digits
+
 PREFIXES = (
     "Acme", "Norte", "Vale Verde", "Horizonte", "Atlas", "Prisma", "Aurora", "Delta",
     "Solaris", "Ipê", "Cedro", "Boreal", "Lumen", "Vértice", "Orion", "Pampa", "Serra Azul",
@@ -21,9 +23,6 @@ SECTORS = (
     "Contabilidade", "Locação de Equipamentos", "Software", "Têxtil",
 )  # fmt: skip
 SUFFIXES = ("Ltda", "S.A.", "Eireli", "ME")
-
-_CNPJ_WEIGHTS_1 = (5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)
-_CNPJ_WEIGHTS_2 = (6, *_CNPJ_WEIGHTS_1)
 
 
 def generate_names(rng: np.random.Generator, count: int) -> list[str]:
@@ -41,24 +40,7 @@ def generate_names(rng: np.random.Generator, count: int) -> list[str]:
     return names
 
 
-def _check_digit(digits: list[int], weights: tuple[int, ...]) -> int:
-    remainder = sum(d * w for d, w in zip(digits, weights, strict=True)) % 11
-    return 0 if remainder < 2 else 11 - remainder
-
-
 def generate_cnpj(rng: np.random.Generator) -> str:
     """Random CNPJ with valid check digits, formatted ``00.000.000/0001-00``."""
     digits = [int(d) for d in rng.integers(0, 10, size=8)] + [0, 0, 0, 1]
-    digits.append(_check_digit(digits, _CNPJ_WEIGHTS_1))
-    digits.append(_check_digit(digits, _CNPJ_WEIGHTS_2))
-    s = "".join(map(str, digits))
-    return f"{s[:2]}.{s[2:5]}.{s[5:8]}/{s[8:12]}-{s[12:]}"
-
-
-def is_valid_cnpj(cnpj: str) -> bool:
-    digits = [int(c) for c in cnpj if c.isdigit()]
-    if len(digits) != 14:
-        return False
-    return digits[12] == _check_digit(digits[:12], _CNPJ_WEIGHTS_1) and digits[13] == _check_digit(
-        digits[:13], _CNPJ_WEIGHTS_2
-    )
+    return format_cnpj(with_check_digits(digits))
