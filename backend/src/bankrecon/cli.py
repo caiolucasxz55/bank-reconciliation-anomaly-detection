@@ -18,6 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from bankrecon.anomalies import detect_anomalies
 from bankrecon.db.load import ReviewsWouldBeLostError, is_loaded, load_results
+from bankrecon.db.migrate import MigrationError
 from bankrecon.db.session import (
     DEFAULT_DATA_DIR,
     create_schema,
@@ -97,6 +98,9 @@ def _open_database(url: str) -> Engine:
     engine = make_engine(url)
     try:
         create_schema(engine)
+    except MigrationError as error:
+        engine.dispose()
+        raise CommandError(str(error)) from error
     except SQLAlchemyError as error:
         engine.dispose()
         raise CommandError(f"não foi possível acessar o banco: {error}") from error

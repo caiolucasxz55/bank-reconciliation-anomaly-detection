@@ -199,8 +199,9 @@ Em outras seeds (1, 2 e 3) os números ficam na mesma faixa:
 - **O score não é recalculado depois de uma revisão.** O ranking é calculado em lote, na
   execução do pipeline. Quando um analista aprova ou rejeita uma sugestão, o status muda,
   mas a posição no ranking e os motivos continuam os da última execução.
-- **Sem migrações de banco.** O MVP cria as tabelas na subida (`create_all`). Uma segunda
-  versão do esquema pediria migrações com Alembic.
+- **Bancos criados antes das migrações precisam ser recriados.** O esquema agora evolui por
+  migrações (Alembic), aplicadas na subida. Um banco criado pela versão anterior, sem
+  histórico de migrações, é recusado com instruções; com Docker, `docker compose down -v`.
 - **Sem autenticação.** Qualquer pessoa com acesso à página pode aprovar ou rejeitar
   sugestões. O campo `decided_by` registra apenas "analista", sem identificar a pessoa.
 

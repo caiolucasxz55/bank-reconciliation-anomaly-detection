@@ -10,7 +10,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from bankrecon.db.models import Base
+from bankrecon.db.migrate import upgrade
 
 DEFAULT_DATA_DIR = Path("data")
 SQLITE_FILE = "bankrecon.db"
@@ -44,8 +44,19 @@ def make_engine(url: str | None = None) -> Engine:
     else:
         Path(database).parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(url, **options)
-    # SQLite ignores foreign keys unless asked to enforce them.
-    event.listen(engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))
+
+    @event.listens_for(engine, "connect")
+    def _on_connect(dbapi_connection, _record) -> None:
+        # SQLite ignores foreign keys unless asked to enforce them.
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+        # Let SQLAlchemy own transactions: pysqlite otherwise commits implicitly before
+        # DDL, so a failed migration could leave half-created tables behind.
+        dbapi_connection.isolation_level = None
+
+    @event.listens_for(engine, "begin")
+    def _on_begin(connection) -> None:
+        connection.exec_driver_sql("BEGIN")
+
     return engine
 
 
@@ -54,5 +65,5 @@ def make_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 
 def create_schema(engine: Engine) -> None:
-    """Create missing tables. The MVP has a single schema version, so no migrations yet."""
-    Base.metadata.create_all(engine)
+    """Apply every pending migration (Alembic), creating the tables on a new database."""
+    upgrade(engine)

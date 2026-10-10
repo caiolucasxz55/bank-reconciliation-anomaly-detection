@@ -3,6 +3,7 @@ from datetime import date
 
 import numpy as np
 
+from bankrecon.generator import GeneratorConfig, generate_dataset
 from bankrecon.generator.profiles import Frequency, SupplierProfile, build_profiles
 
 START = date(2025, 1, 1)
@@ -34,7 +35,9 @@ def test_late_registered_suppliers_are_not_weekly():
 
 
 def test_ids_are_sequential_with_offset():
-    ids = [p.supplier_id for p in build_profiles(np.random.default_rng(0), 3, START, 0, 30)]
+    ids = [
+        p.supplier_id for p in build_profiles(np.random.default_rng(0), 3, START, 0, id_offset=30)
+    ]
     assert ids == ["S031", "S032", "S033"]
 
 
@@ -51,3 +54,19 @@ def test_draw_amount_has_floor():
         "S1", "X", "", Frequency.SPORADIC, 1.0, 0.1, None, _profiles()[0].payment_method, START
     )
     assert profile.draw_amount(np.random.default_rng(0)) == 10.0
+
+
+def test_tax_ids_are_unique_and_avoid_taken_ones():
+    first = _profiles(count=200, late=0)
+    taken = {p.tax_id for p in first}
+    assert len(taken) == 200
+    more = build_profiles(
+        np.random.default_rng(0), 50, START, 0, id_offset=200, taken_tax_ids=taken
+    )
+    assert not taken & {p.tax_id for p in more}
+
+
+def test_generated_datasets_have_unique_tax_ids():
+    for seed in range(5):
+        suppliers = generate_dataset(GeneratorConfig(seed=seed)).suppliers
+        assert suppliers["tax_id"].is_unique
