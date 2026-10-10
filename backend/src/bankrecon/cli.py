@@ -1,6 +1,7 @@
 """Command-line entry point.
 
-Typical flow: ``generate`` -> ``reconcile`` -> ``detect`` -> ``evaluate``, then
+Real data: ``import-invoices`` and ``import-statement`` (each also reprocesses).
+Synthetic data: ``generate`` -> ``reconcile`` -> ``detect`` -> ``evaluate``, then
 ``load-db`` to feed the API. ``demo`` runs everything for an empty database.
 """
 
@@ -17,8 +18,10 @@ from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from bankrecon.anomalies import detect_anomalies
+from bankrecon.db.importer import ImportSummary, import_invoices, import_statement
 from bankrecon.db.load import ReviewsWouldBeLostError, is_loaded, load_results
 from bankrecon.db.migrate import MigrationError
+from bankrecon.db.processing import ProcessSummary, process
 from bankrecon.db.session import (
     DEFAULT_DATA_DIR,
     create_schema,
@@ -30,6 +33,7 @@ from bankrecon.evaluation import evaluate_reconciliation, render_reconciliation
 from bankrecon.evaluation.anomalies import evaluate_anomalies, render_anomalies
 from bankrecon.generator import Dataset, GeneratorConfig, generate_dataset
 from bankrecon.generator.dataset import TRANSACTIONS_FILE
+from bankrecon.ingest import ParseError
 from bankrecon.reconciliation import reconcile
 from bankrecon.results import (
     ResultsMissingError,
@@ -209,6 +213,68 @@ def _cmd_demo(args: argparse.Namespace) -> None:
         engine.dispose()
 
 
+def _print_import(summary: ImportSummary) -> None:
+    parts = [f"{summary.imported} importados", f"{summary.duplicates} já existiam"]
+    if summary.skipped:
+        parts.append(f"{summary.skipped} créditos ignorados")
+    if summary.suppliers_created:
+        parts.append(f"{summary.suppliers_created} fornecedores novos")
+    print(f"{summary.filename}: {', '.join(parts)}.")
+    for error in summary.errors:
+        print(f"  aviso: {error}")
+
+
+def _print_process(summary: ProcessSummary) -> None:
+    print(
+        f"Processadas {summary.transactions} transações "
+        f"({summary.kept_reviews} revisões mantidas, {summary.high_risk} de alto risco)."
+    )
+
+
+def _read_files(paths: list[Path]) -> list[tuple[str, bytes]]:
+    try:
+        return [(path.name, path.read_bytes()) for path in paths]
+    except OSError as error:
+        raise CommandError(f"não foi possível ler {error.filename}: {error.strerror}") from error
+
+
+def _in_database(args: argparse.Namespace, work) -> None:
+    """Run ``work(session)`` in one transaction, then reprocess, all or nothing."""
+    engine = _open_database(args.database_url or database_url(args.data))
+    try:
+        with make_session_factory(engine).begin() as session:
+            work(session)
+            _print_process(process(session))
+    except ParseError as error:
+        raise CommandError(str(error)) from error
+    except SQLAlchemyError as error:
+        raise CommandError(f"falha ao gravar no banco: {error}") from error
+    finally:
+        engine.dispose()
+
+
+def _cmd_import_statement(args: argparse.Namespace) -> None:
+    files = _read_files(args.files)
+
+    def work(session):
+        for filename, content in files:
+            try:
+                _print_import(import_statement(session, filename, content, args.account))
+            except ParseError as error:
+                raise ParseError(f"{filename}: {error}") from error
+
+    _in_database(args, work)
+
+
+def _cmd_import_invoices(args: argparse.Namespace) -> None:
+    files = _read_files(args.files)
+    _in_database(args, lambda session: _print_import(import_invoices(session, files)))
+
+
+def _cmd_process(args: argparse.Namespace) -> None:
+    _in_database(args, lambda session: None)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bankrecon", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -248,6 +314,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="regenera os dados com --seed e recarrega o banco, descartando revisões",
     )
+
+    statement = add_command(
+        "import-statement", _cmd_import_statement, "importa extratos (.ofx ou .csv) e processa"
+    )
+    statement.add_argument("files", nargs="+", type=Path)
+    statement.add_argument("--account", default="conta", help="rótulo da conta (para CSV)")
+    statement.add_argument("--database-url", help=database_help)
+
+    invoices = add_command(
+        "import-invoices", _cmd_import_invoices, "importa notas (NF-e .xml ou .csv) e processa"
+    )
+    invoices.add_argument("files", nargs="+", type=Path)
+    invoices.add_argument("--database-url", help=database_help)
+
+    process_cmd = add_command("process", _cmd_process, "reprocessa conciliação e ranking no banco")
+    process_cmd.add_argument("--database-url", help=database_help)
     return parser
 
 
