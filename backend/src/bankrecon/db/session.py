@@ -10,7 +10,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from bankrecon.db.models import Base
+from bankrecon.db.migrate import upgrade
 
 DEFAULT_DATA_DIR = Path("data")
 SQLITE_FILE = "bankrecon.db"
@@ -54,5 +54,5 @@ def make_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 
 def create_schema(engine: Engine) -> None:
-    """Create missing tables. The MVP has a single schema version, so no migrations yet."""
-    Base.metadata.create_all(engine)
+    """Apply every pending migration (Alembic), creating the tables on a new database."""
+    upgrade(engine)

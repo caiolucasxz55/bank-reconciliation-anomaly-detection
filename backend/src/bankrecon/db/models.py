@@ -1,4 +1,4 @@
-"""Relational model: the pipeline's inputs and outputs, plus the analyst's review decisions."""
+"""Relational model: imported data, the pipeline's outputs and the analyst's decisions."""
 
 from __future__ import annotations
 
@@ -11,9 +11,12 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Integer,
+    MetaData,
     Numeric,
     String,
     Table,
+    func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -22,27 +25,59 @@ MONEY = Numeric(14, 2)
 DECIDED_BY_SYSTEM = "sistema"
 DECIDED_BY_ANALYST = "analista"
 
+# Kinds of imported files.
+IMPORT_STATEMENT = "extrato"
+IMPORT_INVOICES = "notas"
+
+# Deterministic constraint names, so migrations are reproducible on every database.
+NAMING_CONVENTION = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
 
 class Base(DeclarativeBase):
-    pass
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
+
+class ImportBatch(Base):
+    """One imported file and what happened to its rows."""
+
+    __tablename__ = "imports"
+
+    import_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    filename: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    imported: Mapped[int] = mapped_column(default=0)
+    duplicates: Mapped[int] = mapped_column(default=0)
+    # Rows deliberately left out, e.g. credits in a bank statement.
+    skipped: Mapped[int] = mapped_column(default=0)
+    errors: Mapped[list[str]] = mapped_column(JSON, default=list)
 
 
 class Supplier(Base):
     __tablename__ = "suppliers"
 
-    supplier_id: Mapped[str] = mapped_column(String(16), primary_key=True)
+    supplier_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
-    tax_id: Mapped[str] = mapped_column(String(18))
+    # Formatted CNPJ (00.000.000/0000-00); unique so imports can find existing suppliers.
+    tax_id: Mapped[str] = mapped_column(String(18), unique=True)
     registered_at: Mapped[date] = mapped_column(Date)
 
 
 class Invoice(Base):
     __tablename__ = "invoices"
 
-    invoice_id: Mapped[str] = mapped_column(String(16), primary_key=True)
+    # NF-e access key (44 digits) or "<CNPJ digits>-<number>" for CSV imports.
+    invoice_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    number: Mapped[str | None] = mapped_column(String(32))
     supplier_id: Mapped[str] = mapped_column(ForeignKey("suppliers.supplier_id"), index=True)
     issue_date: Mapped[date] = mapped_column(Date)
     amount: Mapped[Decimal] = mapped_column(MONEY)
+    import_id: Mapped[int | None] = mapped_column(ForeignKey("imports.import_id"))
 
     supplier: Mapped[Supplier] = relationship()
 
@@ -50,13 +85,16 @@ class Invoice(Base):
 class BankTransaction(Base):
     __tablename__ = "bank_transactions"
 
-    transaction_id: Mapped[str] = mapped_column(String(16), primary_key=True)
+    # OFX FITID based or a content hash for CSV imports; reimports are recognized by it.
+    transaction_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     date: Mapped[date] = mapped_column(Date, index=True)
+    # Amount paid, always positive: only debits are imported.
     amount: Mapped[Decimal] = mapped_column(MONEY)
-    description: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str] = mapped_column(String(255))
+    import_id: Mapped[int | None] = mapped_column(ForeignKey("imports.import_id"))
 
-    match: Mapped[Match] = relationship(back_populates="transaction")
-    anomaly: Mapped[AnomalyScore] = relationship(back_populates="transaction")
+    match: Mapped[Match | None] = relationship(back_populates="transaction")
+    anomaly: Mapped[AnomalyScore | None] = relationship(back_populates="transaction")
 
 
 # An invoice is settled by at most one transaction, hence the unique invoice_id.
