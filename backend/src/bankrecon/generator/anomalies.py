@@ -148,7 +148,12 @@ class AnomalyInjector:
             return
         threshold = float(np.quantile(reference_amounts, NEW_SUPPLIER_QUANTILE))
         new_profiles = build_profiles(
-            self.rng, count, self.start, n_late_registered=0, id_offset=len(self.profiles)
+            self.rng,
+            count,
+            self.start,
+            n_late_registered=0,
+            id_offset=len(self.profiles),
+            taken_tax_ids={p.tax_id for p in self.profiles},
         )
         taken = {p.name for p in self.profiles}
         next_invoice = len(self.invoices) + 1

@@ -84,9 +84,11 @@ def build_profiles(
     count: int,
     start: date,
     n_late_registered: int,
+    *,
     id_offset: int = 0,
+    taken_tax_ids: set[str] | None = None,
 ) -> list[SupplierProfile]:
-    """Create ``count`` supplier profiles.
+    """Create ``count`` supplier profiles with CNPJs not in ``taken_tax_ids``.
 
     Most suppliers were registered long before ``start``. ``n_late_registered`` legitimate,
     non-weekly suppliers are registered during the first months of the period so that
@@ -101,17 +103,23 @@ def build_profiles(
         ).tolist()
     )
 
+    taken = set(taken_tax_ids or ())
     profiles = []
     for i, (name, frequency) in enumerate(zip(names, frequencies, strict=True)):
         if i in late:
             registered_at = start + timedelta(days=int(rng.integers(60, 240)))
         else:
             registered_at = start - timedelta(days=int(rng.integers(60, 1500)))
+        # Redraw only on a collision, so seeds without one keep producing the same data.
+        tax_id = generate_cnpj(rng)
+        while tax_id in taken:
+            tax_id = generate_cnpj(rng)
+        taken.add(tax_id)
         profiles.append(
             SupplierProfile(
                 supplier_id=f"S{id_offset + i + 1:03d}",
                 name=name,
-                tax_id=generate_cnpj(rng),
+                tax_id=tax_id,
                 frequency=frequency,
                 mean_amount=round(_log_uniform(rng, *MEAN_AMOUNT_RANGE[frequency]), 2),
                 amount_cv=round(float(rng.uniform(*AMOUNT_CV_RANGE)), 3),

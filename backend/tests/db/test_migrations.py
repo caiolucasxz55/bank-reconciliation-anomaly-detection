@@ -3,7 +3,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from sqlalchemy import inspect, text
 
-from bankrecon.db.migrate import UnversionedDatabaseError, upgrade
+from bankrecon.db.migrate import MigrationError, UnversionedDatabaseError, upgrade
 from bankrecon.db.models import Base
 from bankrecon.db.session import make_engine
 
@@ -35,3 +35,15 @@ def test_database_created_without_migrations_is_rejected(engine):
         connection.execute(text("CREATE TABLE bank_transactions (transaction_id TEXT)"))
     with pytest.raises(UnversionedDatabaseError, match="docker compose down -v"):
         upgrade(engine)
+
+
+def test_unknown_revision_is_reported_as_a_migration_error(engine):
+    upgrade(engine)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE alembic_version SET version_num = 'from_the_future'"))
+    with pytest.raises(MigrationError, match="falha ao migrar"):
+        upgrade(engine)
+
+
+def test_unversioned_database_is_a_migration_error():
+    assert issubclass(UnversionedDatabaseError, MigrationError)

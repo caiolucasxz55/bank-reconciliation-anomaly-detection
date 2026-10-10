@@ -6,13 +6,20 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Engine, inspect
+from alembic.util.exc import CommandError as AlembicCommandError
+from sqlalchemy import Connection, Engine, inspect, text
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 VERSION_TABLE = "alembic_version"
+# Arbitrary constant identifying this app's migration lock in Postgres.
+POSTGRES_MIGRATION_LOCK_ID = 7_204_118_301
 
 
-class UnversionedDatabaseError(RuntimeError):
+class MigrationError(RuntimeError):
+    """The database schema could not be brought up to date."""
+
+
+class UnversionedDatabaseError(MigrationError):
     """The database has tables but no migration history (created before migrations)."""
 
     def __init__(self) -> None:
@@ -32,12 +39,29 @@ def alembic_config(engine: Engine | None = None) -> Config:
     return config
 
 
+def _lock(connection: Connection) -> None:
+    """Serialize concurrent upgrades (several workers or replicas starting at once).
+
+    Postgres gets a transaction-scoped advisory lock. SQLite needs nothing more: its
+    write transaction (DDL is transactional, see session.make_engine) locks the file.
+    """
+    if connection.dialect.name == "postgresql":
+        connection.execute(
+            text("SELECT pg_advisory_xact_lock(:id)"), {"id": POSTGRES_MIGRATION_LOCK_ID}
+        )
+
+
 def upgrade(engine: Engine) -> None:
-    """Bring the database to the latest schema version."""
-    tables = set(inspect(engine).get_table_names())
-    if tables and VERSION_TABLE not in tables:
-        raise UnversionedDatabaseError
+    """Bring the database to the latest schema version, atomically."""
     config = alembic_config(engine)
-    with engine.begin() as connection:
-        config.attributes["connection"] = connection
-        command.upgrade(config, "head")
+    try:
+        with engine.begin() as connection:
+            _lock(connection)
+            tables = set(inspect(connection).get_table_names())
+            if tables and VERSION_TABLE not in tables:
+                raise UnversionedDatabaseError
+            config.attributes["connection"] = connection
+            command.upgrade(config, "head")
+    except AlembicCommandError as error:
+        # e.g. the database is at a revision this (older) code does not know.
+        raise MigrationError(f"falha ao migrar o banco: {error}") from error

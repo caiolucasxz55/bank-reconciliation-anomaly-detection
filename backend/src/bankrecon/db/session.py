@@ -44,8 +44,19 @@ def make_engine(url: str | None = None) -> Engine:
     else:
         Path(database).parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(url, **options)
-    # SQLite ignores foreign keys unless asked to enforce them.
-    event.listen(engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))
+
+    @event.listens_for(engine, "connect")
+    def _on_connect(dbapi_connection, _record) -> None:
+        # SQLite ignores foreign keys unless asked to enforce them.
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+        # Let SQLAlchemy own transactions: pysqlite otherwise commits implicitly before
+        # DDL, so a failed migration could leave half-created tables behind.
+        dbapi_connection.isolation_level = None
+
+    @event.listens_for(engine, "begin")
+    def _on_begin(connection) -> None:
+        connection.exec_driver_sql("BEGIN")
+
     return engine
 
 

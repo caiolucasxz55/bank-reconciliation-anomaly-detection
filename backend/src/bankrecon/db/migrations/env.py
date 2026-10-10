@@ -1,11 +1,16 @@
 """Alembic environment.
 
-The database comes from the Alembic config (set by ``bankrecon.db.migrate``) or, when
-Alembic is run by hand from ``backend/``, from ``$DATABASE_URL`` / the default SQLite file.
-A connection can also be handed over through ``config.attributes["connection"]``.
+The app runs migrations through ``bankrecon.db.migrate``, which hands over a connection in
+``config.attributes["connection"]``. When Alembic is run by hand from ``backend/`` (to
+autogenerate a revision), the database is ``$DATABASE_URL`` or the app's default SQLite file
+in the repository's ``data/`` directory (or ``$BANKRECON_DATA_DIR``).
 """
 
 from __future__ import annotations
+
+import os
+from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import Connection
@@ -15,6 +20,17 @@ from bankrecon.db.session import database_url, make_engine
 
 config = context.config
 target_metadata = Base.metadata
+# migrations -> db -> bankrecon -> src -> backend -> repository root
+REPOSITORY_DATA_DIR = Path(__file__).resolve().parents[5] / "data"
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
+
+
+def _url() -> str:
+    if url := config.get_main_option("sqlalchemy.url"):
+        return url
+    return database_url(Path(os.environ.get("BANKRECON_DATA_DIR", REPOSITORY_DATA_DIR)))
 
 
 def _run(connection: Connection) -> None:
@@ -31,7 +47,7 @@ def _run(connection: Connection) -> None:
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=config.get_main_option("sqlalchemy.url") or database_url(),
+        url=_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -45,7 +61,7 @@ def run_migrations_online() -> None:
     if connection is not None:
         _run(connection)
         return
-    engine = make_engine(config.get_main_option("sqlalchemy.url") or database_url())
+    engine = make_engine(_url())
     try:
         with engine.connect() as conn:
             _run(conn)
