@@ -76,10 +76,17 @@ class Invoice(Base):
     number: Mapped[str | None] = mapped_column(String(32))
     supplier_id: Mapped[str] = mapped_column(ForeignKey("suppliers.supplier_id"), index=True)
     issue_date: Mapped[date] = mapped_column(Date)
+    # Installment due date; payments are matched around it when it is known.
+    due_date: Mapped[date | None] = mapped_column(Date)
     amount: Mapped[Decimal] = mapped_column(MONEY)
     import_id: Mapped[int | None] = mapped_column(ForeignKey("imports.import_id"))
 
     supplier: Mapped[Supplier] = relationship()
+
+    @property
+    def reference_date(self) -> date:
+        """Date payments are expected around: the due date, else the issue date."""
+        return self.due_date or self.issue_date
 
 
 class BankTransaction(Base):
