@@ -24,3 +24,8 @@ def test_format_cnpj():
 
 def test_only_digits():
     assert only_digits("11.222.333/0001-81") == "11222333000181"
+
+
+def test_only_ascii_digits_count():
+    assert only_digits("1122233300018²") == "1122233300018"
+    assert not is_valid_cnpj("1122233300018²")

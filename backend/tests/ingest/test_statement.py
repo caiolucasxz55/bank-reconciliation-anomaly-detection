@@ -43,6 +43,33 @@ def test_ofx_ids_are_stable_across_reads():
     assert parse_ofx(_read("extrato_v1.ofx")).rows == parse_ofx(_read("extrato_v1.ofx")).rows
 
 
+def test_ofx_without_fitid_is_stable_across_periods():
+    tx = b"<STMTTRN><DTPOSTED>20250410<TRNAMT>-100.00<MEMO>PIX ACME</STMTTRN>"
+    other = b"<STMTTRN><DTPOSTED>20250402<TRNAMT>-5.00<MEMO>PIX NORTE</STMTTRN>"
+    [alone] = parse_ofx(b"<OFX>" + tx + b"</OFX>").rows
+    later = parse_ofx(b"<OFX>" + other + tx + b"</OFX>").rows[1]
+    assert alone.external_id == later.external_id
+
+
+def test_ofx_with_two_accounts_keeps_each_account():
+    content = (
+        b"<OFX><STMTRS><ACCTID>111<STMTTRN><DTPOSTED>20250101<TRNAMT>-1.00<FITID>9"
+        b"</STMTTRN></STMTRS><STMTRS><ACCTID>222<STMTTRN><DTPOSTED>20250101"
+        b"<TRNAMT>-1.00<FITID>9</STMTTRN></STMTRS></OFX>"
+    )
+    ids = [line.external_id for line in parse_ofx(content).rows]
+    assert ids == ["ofx:111:9", "ofx:222:9"]
+
+
+def test_ofx_xml_entities_are_decoded():
+    content = (
+        b"<OFX><STMTTRN><DTPOSTED>20250101</DTPOSTED><TRNAMT>-1.00</TRNAMT>"
+        b"<MEMO>SILVA &amp; FILHOS</MEMO></STMTTRN></OFX>"
+    )
+    [line] = parse_ofx(content).rows
+    assert line.description == "SILVA & FILHOS"
+
+
 def test_ofx_without_fitid_gets_a_content_id():
     content = b"<OFX><STMTTRN><DTPOSTED>20250101<TRNAMT>-1.00<MEMO>X</STMTTRN></OFX>"
     [line] = parse_ofx(content).rows
@@ -88,10 +115,29 @@ def test_csv_ids_are_stable_across_reads():
     assert first == again
 
 
-def test_csv_with_own_id_column():
-    content = b"data,descricao,valor,documento\n2025-01-02,Pagamento,-10.00,DOC-9\n"
-    [line] = parse_statement_csv(content).rows
-    assert line.external_id == "csv:DOC-9"
+def test_repeated_document_numbers_stay_distinct():
+    content = (
+        b"data;descricao;valor;documento\n"
+        b"02/01/2025;TARIFA;-12,90;0\n"
+        b"02/01/2025;PIX;-50,00;0\n"
+        b"03/01/2025;TARIFA;-12,90;0\n"
+    )
+    ids = [line.external_id for line in parse_statement_csv(content).rows]
+    assert len(set(ids)) == 3
+
+
+def test_csv_ids_are_scoped_by_account():
+    content = b"data;descricao;valor\n02/01/2025;TARIFA PACOTE;-12,90\n"
+    [checking] = parse_statement_csv(content, account="corrente").rows
+    [savings] = parse_statement_csv(content, account="poupanca").rows
+    assert checking.external_id != savings.external_id
+
+
+def test_csv_ids_do_not_depend_on_the_statement_period():
+    april_first_half = b"data;descricao;valor\n10/04/2025;PIX ACME;-100,00\n"
+    whole_april = b"data;descricao;valor\n02/04/2025;PIX NORTE;-5,00\n10/04/2025;PIX ACME;-100,00\n"
+    [first] = parse_statement_csv(april_first_half).rows
+    assert first.external_id == parse_statement_csv(whole_april).rows[1].external_id
 
 
 @pytest.mark.parametrize(

@@ -1,7 +1,14 @@
-"""Bank statement readers: OFX (SGML 1.x and XML 2.x) and CSV."""
+"""Bank statement readers: OFX (SGML 1.x and XML 2.x) and CSV.
+
+Every line gets an ``external_id`` that is the same whenever the same transaction is
+imported again (even from a statement covering a different period), so reimports are
+recognized as duplicates. Ids are scoped by account: OFX files name their accounts; CSV
+files do not, so the caller passes an account label.
+"""
 
 from __future__ import annotations
 
+import html
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -19,10 +26,11 @@ from bankrecon.ingest.common import (
     short_hash,
 )
 
+DEFAULT_ACCOUNT = "conta"
+
 
 @dataclass(frozen=True)
 class StatementLine:
-    # Stable across reimports of the same statement, so duplicates are recognized.
     external_id: str
     date: date
     # Signed as in the statement: negative = money out (a payment).
@@ -30,50 +38,63 @@ class StatementLine:
     description: str
 
 
+class _Occurrences:
+    """Numbers identical lines 1, 2, 3... so two equal payments on a day stay distinct,
+    while the numbering does not depend on where the lines sit in the file."""
+
+    def __init__(self) -> None:
+        self._seen: Counter[tuple] = Counter()
+
+    def next(self, *key: object) -> int:
+        self._seen[key] += 1
+        return self._seen[key]
+
+
 # -- OFX ----------------------------------------------------------------------------------
 
-_TRANSACTION = re.compile(
-    r"<STMTTRN>(.*?)(?:</STMTTRN>|(?=<STMTTRN>)|(?=</BANKTRANLIST>))", re.S | re.I
+# One statement per account: bank (STMTRS) or credit card (CCSTMTRS).
+_STATEMENT = re.compile(
+    r"<(CC)?STMTRS>(.*?)(?:</(?:CC)?STMTRS>|(?=<(?:CC)?STMTRS>)|\Z)", re.S | re.I
 )
-_ACCOUNT = re.compile(r"<ACCTID>([^<\r\n]+)", re.I)
+_TRANSACTION = re.compile(
+    r"<STMTTRN>(.*?)(?:</STMTTRN>|(?=<STMTTRN>)|(?=</BANKTRANLIST>)|\Z)", re.S | re.I
+)
 
 
 def _tag(block: str, name: str) -> str:
-    """Value of ``<NAME>`` in SGML (no closing tag) or XML form."""
+    """Value of ``<NAME>`` in SGML (no closing tag) or XML form, entities decoded."""
     match = re.search(rf"<{name}>([^<\r\n]*)", block, re.I)
-    return match.group(1).strip() if match else ""
+    return html.unescape(match.group(1)).strip() if match else ""
 
 
 def parse_ofx(content: bytes) -> ParseResult[StatementLine]:
     text = decode(content)
     if "<OFX>" not in text.upper():
         raise ParseError("não é um arquivo OFX (tag <OFX> ausente)")
-    account_match = _ACCOUNT.search(text)
-    account = account_match.group(1).strip() if account_match else "conta"
+    statements = [match.group(2) for match in _STATEMENT.finditer(text)] or [text]
 
     result: ParseResult[StatementLine] = ParseResult()
-    for number, match in enumerate(_TRANSACTION.finditer(text), start=1):
-        block = match.group(1)
-        fitid = _tag(block, "FITID")
-        try:
-            posted = parse_date(_tag(block, "DTPOSTED")[:8])
-            amount = parse_amount(_tag(block, "TRNAMT"))
-        except ValueError as error:
-            result.errors.append(f"lançamento {number}: {error}")
-            continue
-        name, memo = _tag(block, "NAME"), _tag(block, "MEMO")
-        description = name if not memo or memo == name else f"{name} {memo}".strip()
-        if not fitid:
-            # Without FITID, identify the line by its content (stable on reimport).
-            fitid = "sem-fitid-" + short_hash(posted, amount, description, number)
-        result.rows.append(
-            StatementLine(
-                external_id=f"ofx:{account}:{fitid}",
-                date=posted,
-                amount=amount,
-                description=clean_description(description) or "(sem descrição)",
-            )
-        )
+    number = 0
+    for statement in statements:
+        account = _tag(statement, "ACCTID") or DEFAULT_ACCOUNT
+        occurrences = _Occurrences()
+        for match in _TRANSACTION.finditer(statement):
+            number += 1
+            block = match.group(1)
+            try:
+                posted = parse_date(_tag(block, "DTPOSTED")[:8])
+                amount = parse_amount(_tag(block, "TRNAMT"))
+            except ValueError as error:
+                result.errors.append(f"lançamento {number}: {error}")
+                continue
+            name, memo = _tag(block, "NAME"), _tag(block, "MEMO")
+            description = name if not memo or memo == name else f"{name} {memo}".strip()
+            description = clean_description(description) or "(sem descrição)"
+            fitid = _tag(block, "FITID")
+            if not fitid:
+                key = (posted, amount, description)
+                fitid = "sem-fitid-" + short_hash(*key, occurrences.next(*key))
+            result.rows.append(StatementLine(f"ofx:{account}:{fitid}", posted, amount, description))
     if not result.rows and not result.errors:
         raise ParseError("nenhum lançamento encontrado no OFX")
     return result
@@ -89,10 +110,16 @@ STATEMENT_COLUMNS = {
 }
 
 
-def parse_statement_csv(content: bytes) -> ParseResult[StatementLine]:
-    """Columns ``data``, ``descricao`` and ``valor`` (negative = payment); ``id`` optional."""
+def parse_statement_csv(
+    content: bytes, account: str = DEFAULT_ACCOUNT
+) -> ParseResult[StatementLine]:
+    """Columns ``data``, ``descricao`` and ``valor`` (negative = payment); ``id`` optional.
+
+    A bank "document" number is not unique on its own (fees often share one), so it is
+    combined with the date, the amount and an occurrence number.
+    """
     result: ParseResult[StatementLine] = ParseResult()
-    seen: Counter[tuple] = Counter()
+    occurrences = _Occurrences()
     for row in read_csv(decode(content), STATEMENT_COLUMNS, {"data", "descricao", "valor"}):
         try:
             posted = parse_date(row.values["data"])
@@ -101,22 +128,23 @@ def parse_statement_csv(content: bytes) -> ParseResult[StatementLine]:
             result.errors.append(f"linha {row.line}: {error}")
             continue
         description = clean_description(row.values["descricao"]) or "(sem descrição)"
-        if own_id := row.values.get("id"):
-            external_id = f"csv:{own_id}"
-        else:
-            # Identical lines (two equal payments on one day) stay distinct by occurrence.
-            key = (posted, amount, description)
-            seen[key] += 1
-            external_id = "csv:" + short_hash(*key, seen[key])
+        own_id = row.values.get("id", "")
+        key = (account, posted, amount, own_id or description)
+        external_id = "csv:" + short_hash(*key, occurrences.next(*key))
         result.rows.append(StatementLine(external_id, posted, amount, description))
     return result
 
 
-def parse_statement(filename: str, content: bytes) -> ParseResult[StatementLine]:
-    """Pick the reader from the file extension (``.ofx``/``.qfx`` or ``.csv``/``.txt``)."""
+def parse_statement(
+    filename: str, content: bytes, account: str = DEFAULT_ACCOUNT
+) -> ParseResult[StatementLine]:
+    """Pick the reader from the file extension (``.ofx``/``.qfx`` or ``.csv``/``.txt``).
+
+    ``account`` scopes CSV ids; OFX files carry their own account ids.
+    """
     name = filename.lower()
     if name.endswith((".ofx", ".qfx")):
         return parse_ofx(content)
     if name.endswith((".csv", ".txt")):
-        return parse_statement_csv(content)
+        return parse_statement_csv(content, account)
     raise ParseError("formato não suportado para extrato; envie .ofx ou .csv")

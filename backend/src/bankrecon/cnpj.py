@@ -20,8 +20,12 @@ def with_check_digits(first_twelve: list[int]) -> str:
     return "".join(map(str, digits))
 
 
+_ASCII_DIGITS = frozenset("0123456789")
+
+
 def only_digits(value: str) -> str:
-    return "".join(c for c in value if c.isdigit())
+    """ASCII digits of ``value`` (``str.isdigit`` would also accept "²" and others)."""
+    return "".join(c for c in value if c in _ASCII_DIGITS)
 
 
 def is_valid_cnpj(cnpj: str) -> bool:

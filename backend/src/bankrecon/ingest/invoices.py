@@ -13,6 +13,7 @@ from defusedxml.ElementTree import fromstring
 
 from bankrecon.cnpj import format_cnpj, is_valid_cnpj, only_digits
 from bankrecon.ingest.common import (
+    MAX_FILE_BYTES,
     ParseError,
     ParseResult,
     decode,
@@ -59,8 +60,11 @@ def parse_nfe(content: bytes) -> list[ParsedInvoice]:
     Each ``<dup>`` installment becomes a payable due on its ``dVenc``; an invoice without
     installments is a single payable of ``vNF``.
     """
+    if len(content) > MAX_FILE_BYTES:
+        raise ParseError(f"arquivo maior que {MAX_FILE_BYTES // (1024 * 1024)} MB")
     try:
-        root = fromstring(decode(content).encode("utf-8"))
+        # Raw bytes: the parser honours the encoding declared in the XML prolog.
+        root = fromstring(content)
     except (XmlParseError, DefusedXmlException) as error:
         raise ParseError(f"XML inválido: {error}") from error
 
@@ -172,10 +176,18 @@ def parse_invoices_csv(content: bytes) -> ParseResult[ParsedInvoice]:
 
 
 def parse_invoice_file(filename: str, content: bytes) -> ParseResult[ParsedInvoice]:
-    """Pick the reader from the extension; one bad NF-e becomes an error, not a failure."""
+    """Pick the reader from the extension.
+
+    An unreadable NF-e (cancelled, invalid...) is reported in ``errors`` so a batch of
+    XML files keeps going; an unsupported extension or a CSV without the required
+    columns raises ``ParseError``.
+    """
     name = filename.lower()
     if name.endswith(".xml"):
-        return ParseResult(rows=parse_nfe(content))
+        try:
+            return ParseResult(rows=parse_nfe(content))
+        except ParseError as error:
+            return ParseResult(errors=[f"{filename}: {error}"])
     if name.endswith((".csv", ".txt")):
         return parse_invoices_csv(content)
     raise ParseError("formato não suportado para notas; envie .xml (NF-e) ou .csv")

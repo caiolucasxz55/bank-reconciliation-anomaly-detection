@@ -107,3 +107,24 @@ def test_parse_invoice_file_dispatches_by_extension():
     assert len(parse_invoice_file("notas.csv", _read("notas.csv")).rows) == 3
     with pytest.raises(ParseError, match=r"envie \.xml"):
         parse_invoice_file("nota.pdf", b"%PDF")
+
+
+def test_nfe_in_latin_1_keeps_accents():
+    content = _read("nfe_a_vista.xml").replace(b'encoding="UTF-8"', b'encoding="ISO-8859-1"')
+    content = content.replace(b"Norte Transportes ME", "Norte Logística ME".encode("latin-1"))
+    [invoice] = parse_nfe(content)
+    assert invoice.supplier_name == "Norte Logística ME"
+
+
+def test_bad_xml_in_a_batch_is_an_error_not_an_exception():
+    result = parse_invoice_file("cancelada.xml", _read("nfe_cancelada.xml"))
+    assert result.rows == []
+    assert result.errors[0].startswith("cancelada.xml: NF-e não autorizada")
+
+
+def test_unicode_digits_in_cnpj_are_not_accepted():
+    content = _read("nfe_a_vista.xml").replace(
+        b"<CNPJ>27865757000102</CNPJ>", "<CNPJ>2786575700010²</CNPJ>".encode()
+    )
+    with pytest.raises(ParseError, match="sem CNPJ válido"):
+        parse_nfe(content)

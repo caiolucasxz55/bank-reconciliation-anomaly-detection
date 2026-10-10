@@ -46,14 +46,23 @@ def decode(content: bytes) -> str:
 _NUMBER_JUNK = re.compile(r"[R$\s ]")
 
 
+_THOUSANDS_ONLY = re.compile(r"^-?\d{1,3}([.,]\d{3})+$")
+
+
 def parse_amount(text: str) -> Decimal:
-    """Brazilian or international amounts: ``1.234,56``, ``-1234.56``, ``R$ (10,00)``."""
+    """Brazilian or international amounts: ``1.234,56``, ``-1234.56``, ``R$ (10,00)``.
+
+    A lone separator followed by exactly three digits (``1.500``, ``2,000``) is read as a
+    thousands separator, as money is written with two decimals or none.
+    """
     raw = _NUMBER_JUNK.sub("", text or "")
     negative = raw.startswith("(") and raw.endswith(")")
     raw = raw.strip("()")
     if raw.endswith("-"):  # some banks print "123,45-"
         negative, raw = True, raw[:-1]
-    if "," in raw and "." in raw:
+    if _THOUSANDS_ONLY.match(raw):
+        raw = raw.replace(".", "").replace(",", "")
+    elif "," in raw and "." in raw:
         # The last separator is the decimal one.
         if raw.rfind(",") > raw.rfind("."):
             raw = raw.replace(".", "").replace(",", ".")
@@ -61,8 +70,6 @@ def parse_amount(text: str) -> Decimal:
             raw = raw.replace(",", "")
     elif "," in raw:
         raw = raw.replace(",", ".")
-    elif raw.count(".") > 1:
-        raw = raw.replace(".", "")  # 1.234.567 = thousands separators
     try:
         value = Decimal(raw)
     except InvalidOperation as error:
@@ -76,13 +83,14 @@ _DATE_FORMATS = ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%y", "%Y%m%d", "%d.%
 
 
 def parse_date(text: str) -> date:
-    """Dates as banks and ERPs export them; ISO timestamps keep only the date part."""
+    """Dates as banks and ERPs export them; a time part (``T10:15``, `` 10:15``) is ignored."""
     raw = (text or "").strip()
-    if len(raw) >= 19 and raw[4] == "-" and "T" in raw:  # 2025-03-10T10:00:00-03:00
-        raw = raw[:10]
+    # "2025-03-10T10:00:00-03:00" or "07/04/2025 10:15" -> keep the date part.
+    date_part = raw.split("T", 1)[0] if len(raw) > 10 and raw[4:5] == "-" else raw
+    date_part = date_part.split(" ", 1)[0]
     for fmt in _DATE_FORMATS:
         try:
-            return datetime.strptime(raw, fmt).date()
+            return datetime.strptime(date_part, fmt).date()
         except ValueError:
             continue
     raise ValueError(f"data inválida: {text!r}")
