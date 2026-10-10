@@ -9,8 +9,16 @@ from rapidfuzz import fuzz, process
 
 from bankrecon.text import normalize
 
-# Payment-method prefixes banks put before the counterparty name, longest first.
-METHOD_PREFIXES = ("PAG BOLETO", "PIX", "TED", "DOC")
+# Words banks put before the counterparty name ("PIX ENVIADO", "PAGAMENTO DE BOLETO",
+# "TRANSF ENVIADA", "DEB AUT", "SISPAG"...). Only a leading run of them is removed.
+LEADING_NOISE = frozenset(
+    {
+        "PIX", "TED", "DOC", "PAG", "PAGTO", "PGTO", "PAGAMENTO", "PAGAMENTOS", "BOLETO",
+        "BOLETOS", "TIT", "TITULO", "TITULOS", "ENVIADO", "ENVIADA", "ENVIO", "EMITIDO",
+        "EMITIDA", "TRANSF", "TRANSFERENCIA", "DEB", "DEBITO", "AUT", "AUTOMATICO",
+        "SISPAG", "QR", "CODE", "INTERNET", "IB", "DE", "PARA", "A", "-",
+    }
+)  # fmt: skip
 # Too short a fragment (e.g. "PIX AC") would be a prefix of many names.
 MIN_EXACT_PREFIX_LEN = 6
 
@@ -22,12 +30,13 @@ class SupplierCandidate:
 
 
 def counterparty(description: str) -> str:
-    """Normalized description without the payment-method prefix."""
-    text = normalize(description)
-    for prefix in METHOD_PREFIXES:
-        if text.startswith(prefix + " "):
-            return text[len(prefix) + 1 :]
-    return text
+    """Normalized description without the payment-method words before the name."""
+    words = normalize(description).split()
+    start = 0
+    # Keep at least one word: a description made only of noise is left as it is.
+    while start < len(words) - 1 and words[start] in LEADING_NOISE:
+        start += 1
+    return " ".join(words[start:])
 
 
 class SupplierResolver:

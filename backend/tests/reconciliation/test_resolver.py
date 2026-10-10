@@ -22,7 +22,12 @@ def resolver():
         ("PAG BOLETO LUMEN CONS", "LUMEN CONS"),
         ("TED Vale Verde", "VALE VERDE"),
         ("PIXACME", "PIXACME"),
-        ("TRANSFERENCIA ACME", "TRANSFERENCIA ACME"),
+        ("TRANSFERENCIA ACME", "ACME"),
+        ("PIX ENVIADO ACME LOGISTICA", "ACME LOGISTICA"),
+        ("PAGAMENTO DE BOLETO - ACME LTDA", "ACME LTDA"),
+        ("SISPAG TED ACME", "ACME"),
+        ("DEB AUT ENERGIA", "ENERGIA"),
+        ("PIX ENVIADO", "ENVIADO"),
     ],
 )
 def test_counterparty_strips_method_prefix(description, expected):
