@@ -1,5 +1,5 @@
-# API image: installs the bankrecon package, loads the demo data on first start and serves
-# the FastAPI app.
+# API image: applies database migrations and serves the FastAPI app. With
+# LOAD_DEMO_DATA=true it also loads synthetic demo data into an empty database.
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -7,7 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_ROOT_USER_ACTION=ignore \
-    BANKRECON_DATA_DIR=/app/data
+    BANKRECON_DATA_DIR=/app/data \
+    LOAD_DEMO_DATA=false
 
 WORKDIR /app
 
@@ -29,4 +30,4 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=60s --retries=5 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=2)"
 
 # demo is idempotent: it only generates and loads data when the database is empty.
-CMD ["sh", "-c", "bankrecon demo --data /app/data && exec uvicorn --factory bankrecon.api.app:create_app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "if [ \"$LOAD_DEMO_DATA\" = true ]; then bankrecon demo --data /app/data || exit 1; fi; exec uvicorn --factory bankrecon.api.app:create_app --host 0.0.0.0 --port 8000"]
