@@ -158,8 +158,8 @@ def test_load_db_protects_analyst_reviews(data_dir, capsys):
     capsys.readouterr()
 
     assert main(["load-db", "--data", data]) == 2
-    assert "--discard-reviews" in capsys.readouterr().err
-    assert main(["load-db", "--data", data, "--discard-reviews"]) == 0
+    assert "--replace" in capsys.readouterr().err
+    assert main(["load-db", "--data", data, "--replace"]) == 0
 
 
 @pytest.mark.usefixtures("no_database_env")
@@ -222,3 +222,13 @@ def test_unreadable_statement_imports_nothing(db_args, tmp_path, capsys):
 def test_missing_file_is_reported(db_args, tmp_path, capsys):
     assert main(["import-invoices", str(tmp_path / "nao_existe.xml"), *db_args]) == 2
     assert "não foi possível ler" in capsys.readouterr().err
+
+
+def test_import_invoices_fails_when_no_file_can_be_read(db_args, tmp_path, capsys):
+    bad = tmp_path / "notas.pdf"
+    bad.write_bytes(b"%PDF")
+    cancelled = FIXTURES / "nfe_cancelada.xml"
+    assert main(["import-invoices", str(bad), str(cancelled), *db_args]) == 2
+    err = capsys.readouterr().err
+    assert "nenhum arquivo pôde ser lido" in err
+    assert "notas.pdf" in err

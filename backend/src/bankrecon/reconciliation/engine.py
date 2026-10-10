@@ -7,7 +7,11 @@ reliable rule to the least reliable:
 2. tolerant: amount reduced by a bank fee and/or fuzzy supplier name and/or later payment;
 3. multi-invoice: open invoices of one supplier whose sum equals the paid amount.
 
-Payments are never matched to invoices issued after them.
+Each invoice has a reference date (``issue_date`` column: the due date when known) and
+an earliest payment date (optional ``earliest_date`` column, default: the reference date).
+A payment can match an invoice from its earliest date up to a few days after its reference
+date, so a boleto paid before its due date still matches, while a payment is never matched
+to an invoice issued after it.
 """
 
 from __future__ import annotations
@@ -39,8 +43,9 @@ class _Transaction:
 class _Invoice:
     invoice_id: str
     supplier_id: str
-    issue_date: date
+    issue_date: date  # reference date: payments are expected around it
     cents: int
+    earliest: date  # no payment before this date can settle the invoice
 
 
 @dataclass(frozen=True)
@@ -71,12 +76,20 @@ class Reconciler:
             )
             for r in transactions.itertuples(index=False)
         ]
-        open_invoices = [
-            _Invoice(
-                r.invoice_id, r.supplier_id, pd.Timestamp(r.issue_date).date(), _to_cents(r.amount)
+        has_earliest = "earliest_date" in invoices.columns
+        open_invoices = []
+        for r in invoices.sort_values(["issue_date", "invoice_id"]).itertuples(index=False):
+            reference = pd.Timestamp(r.issue_date).date()
+            earliest = pd.Timestamp(r.earliest_date).date() if has_earliest else reference
+            open_invoices.append(
+                _Invoice(
+                    r.invoice_id,
+                    r.supplier_id,
+                    reference,
+                    _to_cents(r.amount),
+                    min(earliest, reference),
+                )
             )
-            for r in invoices.sort_values(["issue_date", "invoice_id"]).itertuples(index=False)
-        ]
         results = _Run(self.config, self.resolver, open_invoices).execute(txs)
         return [results[tx.transaction_id] for tx in txs]
 
@@ -128,6 +141,12 @@ class _Run:
             NAME_WEIGHT * name_score + AMOUNT_WEIGHT * amount_score + DATE_WEIGHT * date_score, 4
         )
 
+    @staticmethod
+    def _payable(tx: _Transaction, inv: _Invoice, max_days_late: int) -> bool:
+        """Paid on or after the invoice's earliest date, at most ``max_days_late`` days
+        after its reference date."""
+        return inv.earliest <= tx.date and (tx.date - inv.issue_date).days <= max_days_late
+
     def _date_score(self, days: int) -> float:
         """1.0 inside the exact window, decreasing linearly until the tolerant window ends."""
         cfg = self.config
@@ -163,13 +182,14 @@ class _Run:
             matches = [
                 inv
                 for inv in open_invoices
-                if inv.cents == tx.cents
-                and 0 <= (tx.date - inv.issue_date).days <= self.config.exact_max_days
+                if inv.cents == tx.cents and self._payable(tx, inv, self.config.exact_max_days)
             ]
             if not matches:
                 left.append(tx)
                 continue
-            best = min(matches, key=lambda inv: ((tx.date - inv.issue_date).days, inv.issue_date))
+            best = min(
+                matches, key=lambda inv: (abs((tx.date - inv.issue_date).days), inv.issue_date)
+            )
             candidate = _Candidate(1.0, best.supplier_id, (best,))
             self._settle(tx, candidate, Layer.EXACT, MatchStatus.RECONCILED)
         return left
@@ -209,7 +229,9 @@ class _Run:
             for inv in self.open.get(supplier.supplier_id, []):
                 days = (tx.date - inv.issue_date).days
                 fee = inv.cents - tx.cents
-                if not (0 <= days <= cfg.tolerant_max_days and 0 <= fee <= self.fee_cents):
+                if not (
+                    self._payable(tx, inv, cfg.tolerant_max_days) and 0 <= fee <= self.fee_cents
+                ):
                     continue
                 confidence = self._confidence(supplier.score, fee, self._date_score(days))
                 if confidence >= cfg.tolerant_min_confidence:
@@ -241,7 +263,7 @@ class _Run:
             window = [
                 inv
                 for inv in self.open.get(supplier.supplier_id, [])
-                if 0 <= (tx.date - inv.issue_date).days <= cfg.multi_max_days
+                if self._payable(tx, inv, cfg.multi_max_days)
             ]
             # Safety bound on the combinatorial search; the window rarely holds this many.
             pool = window[: cfg.multi_max_candidates]

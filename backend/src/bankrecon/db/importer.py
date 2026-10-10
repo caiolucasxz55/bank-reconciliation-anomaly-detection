@@ -41,6 +41,9 @@ class ImportSummary:
     skipped: int = 0
     errors: list[str] = field(default_factory=list)
     suppliers_created: int = 0
+    files: int = 1
+    # Files that yielded nothing but errors (unreadable, wrong format, cancelled NF-e...).
+    files_failed: int = 0
 
 
 def transaction_id(external_id: str) -> str:
@@ -153,7 +156,7 @@ def import_invoices(session: Session, files: Iterable[tuple[str, bytes]]) -> Imp
     """
     files = list(files)
     batch = _start_batch(session, IMPORT_INVOICES, _batch_name([name for name, _ in files]))
-    summary = ImportSummary(batch.import_id, IMPORT_INVOICES, batch.filename)
+    summary = ImportSummary(batch.import_id, IMPORT_INVOICES, batch.filename, files=len(files))
 
     parsed: dict[str, ParsedInvoice] = {}
     for filename, content in files:
@@ -161,8 +164,11 @@ def import_invoices(session: Session, files: Iterable[tuple[str, bytes]]) -> Imp
             result = parse_invoice_file(filename, content)
         except ParseError as error:
             summary.errors.append(f"{filename}: {error}")
+            summary.files_failed += 1
             continue
         summary.errors.extend(result.errors)
+        if not result.rows and result.errors:
+            summary.files_failed += 1
         for invoice in result.rows:
             if invoice.invoice_id in parsed:
                 summary.duplicates += 1

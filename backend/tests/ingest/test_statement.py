@@ -151,3 +151,12 @@ def test_parse_statement_dispatches_by_extension(filename, fixture):
 def test_parse_statement_rejects_unknown_formats():
     with pytest.raises(ParseError, match=r"envie .ofx ou .csv"):
         parse_statement("extrato.pdf", b"%PDF")
+
+
+def test_repeated_fitid_in_one_file_keeps_both_payments():
+    content = (
+        b"<OFX><ACCTID>1<STMTTRN><DTPOSTED>20250101<TRNAMT>-1.00<FITID>7<MEMO>A</STMTTRN>"
+        b"<STMTTRN><DTPOSTED>20250102<TRNAMT>-2.00<FITID>7<MEMO>B</STMTTRN></OFX>"
+    )
+    ids = [line.external_id for line in parse_ofx(content).rows]
+    assert ids == ["ofx:1:7", "ofx:1:7#2"]

@@ -4,10 +4,12 @@ import pytest
 from sqlalchemy import func, select
 
 from bankrecon.db import repository
-from bankrecon.db.load import ReviewsWouldBeLostError, is_loaded, load_results
+from bankrecon.db.importer import import_statement
+from bankrecon.db.load import DataWouldBeLostError, is_loaded, load_results
 from bankrecon.db.models import (
     AnomalyScore,
     BankTransaction,
+    ImportBatch,
     Invoice,
     Match,
     Supplier,
@@ -89,12 +91,23 @@ def test_reload_refuses_to_erase_analyst_reviews(session_factory, pipeline):
     with session_factory.begin() as session:
         repository.approve(session, tx_id)
 
-    with pytest.raises(ReviewsWouldBeLostError) as info:
+    with pytest.raises(DataWouldBeLostError, match="1 revisões") as info:
         _reload(session_factory, pipeline)
-    assert info.value.count == 1
+    assert (info.value.reviews, info.value.imports) == (1, 0)
     with session_factory() as session:
         assert session.get(Match, tx_id).decided_by == "analista"
 
-    _reload(session_factory, pipeline, discard_reviews=True)
+    _reload(session_factory, pipeline, replace_existing=True)
     with session_factory() as session:
         assert session.get(Match, tx_id).decided_by == "sistema"
+
+
+def test_reload_refuses_to_erase_imported_files(session_factory, pipeline):
+    with session_factory.begin() as session:
+        statement = b"data;descricao;valor\n02/01/2025;PIX X;-10,00\n"
+        import_statement(session, "extrato.csv", statement)
+    with pytest.raises(DataWouldBeLostError, match="1 arquivos importados"):
+        _reload(session_factory, pipeline)
+    _reload(session_factory, pipeline, replace_existing=True)
+    with session_factory() as session:
+        assert _count(session, ImportBatch) == 0

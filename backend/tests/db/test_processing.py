@@ -108,3 +108,20 @@ def test_analyst_decisions_survive_reprocessing(db):
     with db() as session:
         match = session.get(Match, tx_id)
         assert (match.status, match.decided_by, match.invoices) == ("divergente", "analista", [])
+
+
+def test_boleto_paid_before_its_due_date_is_matched():
+    engine = make_engine("sqlite://")
+    create_schema(engine)
+    factory = make_session_factory(engine)
+    early = b"data;descricao;valor\n30/04/2025;PIX ACME LOGISTICA E TRANSPORTES;-1.500,00\n"
+    with factory.begin() as session:
+        import_invoices(session, [("n.xml", (FIXTURES / "nfe_parcelada.xml").read_bytes())])
+        import_statement(session, "extrato.csv", early)
+        process(session)
+    # Installment 002 is due 05/05 and installment 001 was due 05/04: the closest wins.
+    assert _matches(factory)["30/04 PIX ACME LOGISTICA E TRANSPORTES"] == (
+        "conciliada",
+        ["1234/002"],
+    )
+    engine.dispose()

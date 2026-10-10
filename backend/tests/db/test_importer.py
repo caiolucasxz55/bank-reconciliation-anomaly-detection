@@ -92,6 +92,7 @@ def test_invoice_import_registers_suppliers_and_installments(empty_db):
     assert len(summary.errors) == 1
     assert summary.errors[0].startswith("cancelada.xml: NF-e não autorizada")
     assert summary.filename == "3 arquivos: parcelada.xml, a_vista.xml, cancelada.xml"
+    assert (summary.files, summary.files_failed) == (3, 1)
     with empty_db() as session:
         acme = session.scalar(select(Supplier).where(Supplier.tax_id == "45.997.418/0001-53"))
         assert acme.name == "Acme Logística e Transportes Ltda"

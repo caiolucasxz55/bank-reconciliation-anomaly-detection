@@ -29,14 +29,25 @@ class SupplierCandidate:
     score: float  # similarity in [0, 1]; 1.0 for an exact prefix match
 
 
-def counterparty(description: str) -> str:
-    """Normalized description without the payment-method words before the name."""
+def counterparty_variants(description: str) -> list[str]:
+    """The normalized description with 0, 1, 2... leading noise words removed.
+
+    Least stripped first: a name may itself start with a "noise" word (DE MARCHI, A
+    PREFERIDA), so the exact lookup tries every variant before giving up.
+    """
     words = normalize(description).split()
+    variants = [" ".join(words)]
     start = 0
     # Keep at least one word: a description made only of noise is left as it is.
     while start < len(words) - 1 and words[start] in LEADING_NOISE:
         start += 1
-    return " ".join(words[start:])
+        variants.append(" ".join(words[start:]))
+    return variants
+
+
+def counterparty(description: str) -> str:
+    """Normalized description without the payment-method words before the name."""
+    return counterparty_variants(description)[-1]
 
 
 class SupplierResolver:
@@ -51,11 +62,15 @@ class SupplierResolver:
 
         Returns ``None`` when no supplier or more than one supplier matches.
         """
-        fragment = counterparty(description)
-        if len(fragment) < MIN_EXACT_PREFIX_LEN:
-            return None
-        hits = [sid for sid, name in self._names.items() if name.startswith(fragment)]
-        return hits[0] if len(hits) == 1 else None
+        for fragment in counterparty_variants(description):
+            if len(fragment) < MIN_EXACT_PREFIX_LEN:
+                continue
+            hits = [sid for sid, name in self._names.items() if name.startswith(fragment)]
+            if len(hits) == 1:
+                return hits[0]
+            if hits:
+                return None  # ambiguous: a shorter fragment would only be more ambiguous
+        return None
 
     def candidates(
         self, description: str, min_score: float, limit: int = 3

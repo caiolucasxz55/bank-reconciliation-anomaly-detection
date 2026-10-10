@@ -34,6 +34,10 @@ MODEL_FEATURES = (
 class FeatureConfig:
     # A supplier registered at most this many days before the payment is "new".
     new_supplier_days: int = 30
+    # Suppliers already known in the first days of the history are not "new": when real
+    # data is imported, suppliers are registered from their first invoice, so every
+    # supplier would otherwise look new at the start of the history.
+    history_warmup_days: int = 14
     # Same supplier and amount (within ``duplicate_tolerance``) inside this many days.
     duplicate_window_days: int = 5
     duplicate_tolerance: float = 0.01
@@ -124,9 +128,11 @@ def compute_features(
     registered = dict(zip(suppliers["supplier_id"], suppliers["registered_at"], strict=True))
     registered_at = pd.to_datetime(frame["supplier_id"].map(registered))
     frame["supplier_age_days"] = (frame["date"] - registered_at).dt.days
-    frame["is_new_supplier"] = (
-        ~known | (frame["supplier_age_days"] <= config.new_supplier_days)
-    ).astype(int)
+    warmup_end = frame["date"].min() + pd.Timedelta(days=config.history_warmup_days)
+    recently_registered = (frame["supplier_age_days"] <= config.new_supplier_days) & (
+        registered_at > warmup_end
+    )
+    frame["is_new_supplier"] = (~known | recently_registered).astype(int)
 
     _add_duplicates(frame, config)
     _add_atypical_day(frame, config)

@@ -157,3 +157,11 @@ def test_works_before_any_supplier_is_registered():
     features = compute_features(transactions, matches, no_suppliers)
     assert (features["is_new_supplier"] == 1).all()
     assert not features[list(MODEL_FEATURES)].isna().any().any()
+
+
+def test_suppliers_seen_at_the_start_of_the_history_are_not_new():
+    suppliers = SUPPLIERS.assign(registered_at=pd.to_datetime("2025-03-01"))
+    transactions, matches = _frames(_weekly())  # first payment 2025-03-03
+    features = compute_features(transactions, matches, suppliers).set_index("transaction_id")
+    assert features.loc["W0", "supplier_age_days"] == 2
+    assert features.loc["W0", "is_new_supplier"] == 0

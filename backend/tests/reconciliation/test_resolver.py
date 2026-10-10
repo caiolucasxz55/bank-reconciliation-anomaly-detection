@@ -65,3 +65,9 @@ def test_candidates_fuzzy_ranks_the_right_supplier_first(resolver):
 
 def test_candidates_respects_min_score(resolver):
     assert resolver.candidates("PIX ZZZZZZZZ QQQQ", min_score=0.6) == []
+
+
+def test_exact_keeps_names_that_start_with_a_noise_word():
+    resolver = SupplierResolver([("S1", "De Marchi Alimentos Ltda"), ("S2", "Acme Logística")])
+    assert resolver.exact("PIX DE MARCHI ALIMENTOS") == "S1"
+    assert resolver.exact("PIX ENVIADO ACME LOGISTICA") == "S2"
