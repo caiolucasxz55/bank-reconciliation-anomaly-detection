@@ -75,9 +75,12 @@ def import_statement(
 ) -> ImportSummary:
     """Import the payments (debits) of one statement file; credits are skipped.
 
-    Raises ``ParseError`` when the file cannot be read at all; nothing is stored then.
+    Raises ``ParseError`` when the file cannot be read, or none of its lines can; nothing
+    is stored then.
     """
     parsed = parse_statement(filename, content, account)
+    if not parsed.rows and parsed.errors:
+        raise ParseError("nenhuma linha pôde ser lida: " + "; ".join(parsed.errors[:5]))
     batch = _start_batch(session, IMPORT_STATEMENT, filename)
     summary = ImportSummary(batch.import_id, IMPORT_STATEMENT, batch.filename, errors=parsed.errors)
 
@@ -152,28 +155,41 @@ def _upsert_suppliers(session: Session, invoices: list[ParsedInvoice]) -> tuple[
 def import_invoices(session: Session, files: Iterable[tuple[str, bytes]]) -> ImportSummary:
     """Import invoices from one or more files (NF-e XML or CSV) as a single import.
 
-    A file that cannot be read becomes an error message; the other files still import.
+    A file that cannot be read becomes an error message and the other files still
+    import. Raises ``ParseError`` (storing nothing) when no file can be read.
     """
     files = list(files)
-    batch = _start_batch(session, IMPORT_INVOICES, _batch_name([name for name, _ in files]))
-    summary = ImportSummary(batch.import_id, IMPORT_INVOICES, batch.filename, files=len(files))
-
+    errors: list[str] = []
+    files_failed = duplicates = 0
     parsed: dict[str, ParsedInvoice] = {}
     for filename, content in files:
         try:
             result = parse_invoice_file(filename, content)
         except ParseError as error:
-            summary.errors.append(f"{filename}: {error}")
-            summary.files_failed += 1
+            errors.append(f"{filename}: {error}")
+            files_failed += 1
             continue
-        summary.errors.extend(result.errors)
+        errors.extend(result.errors)
         if not result.rows and result.errors:
-            summary.files_failed += 1
+            files_failed += 1
         for invoice in result.rows:
             if invoice.invoice_id in parsed:
-                summary.duplicates += 1
+                duplicates += 1
             else:
                 parsed[invoice.invoice_id] = invoice
+    if files and files_failed == len(files):
+        raise ParseError("nenhum arquivo pôde ser lido: " + "; ".join(errors[:5]))
+
+    batch = _start_batch(session, IMPORT_INVOICES, _batch_name([name for name, _ in files]))
+    summary = ImportSummary(
+        batch.import_id,
+        IMPORT_INVOICES,
+        batch.filename,
+        duplicates=duplicates,
+        errors=errors,
+        files=len(files),
+        files_failed=files_failed,
+    )
 
     existing = set(
         session.scalars(select(Invoice.invoice_id).where(Invoice.invoice_id.in_(parsed.keys())))

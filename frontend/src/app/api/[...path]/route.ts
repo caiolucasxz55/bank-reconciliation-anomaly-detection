@@ -3,6 +3,8 @@
 
 const DEFAULT_API_URL = "http://localhost:8000";
 const UPSTREAM_TIMEOUT_MS = 15_000;
+// Imports run the whole reprocessing before answering; give them more time.
+const IMPORT_TIMEOUT_MS = 180_000;
 
 function apiUrl(): string {
   return process.env.API_URL ?? DEFAULT_API_URL;
@@ -23,7 +25,9 @@ async function forward(request: Request): Promise<Response> {
       headers,
       body: hasBody ? await request.arrayBuffer() : undefined,
       cache: "no-store",
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      signal: AbortSignal.timeout(
+        request.method === "POST" ? IMPORT_TIMEOUT_MS : UPSTREAM_TIMEOUT_MS,
+      ),
     });
     return new Response(upstream.body, {
       status: upstream.status,

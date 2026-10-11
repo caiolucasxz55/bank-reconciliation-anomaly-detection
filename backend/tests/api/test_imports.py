@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from bankrecon.api import imports
+from bankrecon.api import imports, limits
 from bankrecon.api.app import create_app
 from bankrecon.db.session import create_schema, make_engine, make_session_factory
 
@@ -125,3 +125,39 @@ def test_invoices_arriving_after_the_statement_reconcile_old_payments(client):
     assert norte()["status"] == "divergente"
     _upload_invoices(client, "nfe_a_vista.xml")
     assert norte()["status"] == "conciliada"
+
+
+def test_oversized_request_is_rejected_before_parsing(client, monkeypatch):
+    monkeypatch.setattr(limits, "MULTIPART_OVERHEAD_BYTES", 0)
+    app = create_app(client.app.state.session_factory)
+    app.user_middleware.clear()
+    app.add_middleware(limits.UploadSizeLimit, max_bytes=100, path_prefix="/api/imports")
+    with TestClient(app) as small:
+        response = small.post("/api/imports/statement", files={"file": ("a.csv", b"x" * 500)})
+    assert response.status_code == 413
+    assert "envio grande demais" in response.json()["detail"]
+
+
+def test_upload_without_content_length_is_refused(client):
+    def chunks():
+        yield b"--b\r\n"
+
+    response = client.post(
+        "/api/imports/statement",
+        content=chunks(),
+        headers={"content-type": "multipart/form-data; boundary=b"},
+    )
+    assert response.status_code == 411
+
+
+def test_file_without_name_is_rejected(client):
+    response = client.post("/api/imports/statement", files={"file": ("", b"data;valor\n")})
+    assert response.status_code == 422
+
+
+def test_statement_with_no_readable_line_is_rejected(client):
+    content = b"data;descricao;valor\n01/01/2025;X;abc\n"
+    response = client.post("/api/imports/statement", files={"file": ("e.csv", content)})
+    assert response.status_code == 422
+    assert "nenhuma linha pôde ser lida" in response.json()["detail"]
+    assert client.get("/api/imports").json() == []

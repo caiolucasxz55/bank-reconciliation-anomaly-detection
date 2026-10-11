@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from bankrecon.api import imports
 from bankrecon.api.deps import SessionDep
+from bankrecon.api.limits import UploadSizeLimit
 from bankrecon.api.schemas import (
     SummaryOut,
     TransactionDetailOut,
@@ -139,6 +140,9 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         allow_origins=[o.strip() for o in origins if o.strip()],
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
+    )
+    app.add_middleware(
+        UploadSizeLimit, max_bytes=imports.MAX_UPLOAD_BYTES, path_prefix="/api/imports"
     )
     app.include_router(router)
     app.include_router(imports.router)
