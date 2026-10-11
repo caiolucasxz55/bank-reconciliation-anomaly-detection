@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { api, DEFAULT_FILTERS, type TransactionDetail, type TransactionFilters } from "@/lib/api";
@@ -117,21 +118,39 @@ export function Dashboard() {
         </div>
       )}
 
-      <SummaryCards summary={summary.data} filters={filters} onSelect={changeFilters} />
-      <Filters
-        filters={filters}
-        search={searchInput}
-        onSearch={setSearchInput}
-        onChange={changeFilters}
-      />
-      <TransactionTable
-        page={page.data}
-        loading={page.loading}
-        failed={page.error !== undefined}
-        selectedId={selectedId}
-        onSelect={select}
-        onPage={(offset) => setFilters((current) => ({ ...current, offset }))}
-      />
+      {!summary.data && !summary.error ? (
+        // Until the totals arrive it is unknown whether there is anything to list.
+        <SummaryCards summary={undefined} filters={filters} onSelect={changeFilters} />
+      ) : summary.data?.total === 0 ? (
+        <div className={styles.emptyState}>
+          <h2>Nenhuma transação ainda</h2>
+          <p>
+            Importe o extrato do banco e as notas fiscais dos fornecedores para conciliar os
+            pagamentos e ver as transações incomuns.
+          </p>
+          <Link href="/importar" className={`${styles.button} ${styles.primary}`}>
+            Importar dados
+          </Link>
+        </div>
+      ) : (
+        <>
+          <SummaryCards summary={summary.data} filters={filters} onSelect={changeFilters} />
+          <Filters
+            filters={filters}
+            search={searchInput}
+            onSearch={setSearchInput}
+            onChange={changeFilters}
+          />
+          <TransactionTable
+            page={page.data}
+            loading={page.loading}
+            failed={page.error !== undefined}
+            selectedId={selectedId}
+            onSelect={select}
+            onPage={(offset) => setFilters((current) => ({ ...current, offset }))}
+          />
+        </>
+      )}
 
       {selectedId && (
         <DetailPanel

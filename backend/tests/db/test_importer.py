@@ -143,3 +143,11 @@ def test_unreadable_invoice_file_is_an_error_and_others_import(empty_db):
     assert summary.imported == 3
     assert summary.errors[0].startswith("notas.pdf: formato não suportado")
     assert "CNPJ inválido" in summary.errors[1]
+
+
+def test_same_invoice_from_xml_and_spreadsheet_is_imported_once(empty_db):
+    files = [("nfe.xml", _read("nfe_parcelada.xml")), ("notas.csv", _read("notas.csv"))]
+    with empty_db.begin() as session:
+        summary = import_invoices(session, files)
+    # 2 installments from the XML + NF 88 from the CSV; the CSV copies of 1234 are duplicates.
+    assert (summary.imported, summary.duplicates) == (3, 2)

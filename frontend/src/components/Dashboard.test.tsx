@@ -96,6 +96,23 @@ afterEach(() => {
 const rowFor = (n: number) => screen.getByText(`PIX FORNECEDOR ${n}`);
 
 describe("Dashboard", () => {
+  it("points an empty database to the import page", async () => {
+    fake.rows = [];
+    render(<Dashboard />);
+    expect(await screen.findByText("Nenhuma transação ainda")).toBeDefined();
+    const link = screen.getByRole("link", { name: "Importar dados" });
+    expect(link.getAttribute("href")).toBe("/importar");
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("shows neither the table nor the empty state before the totals arrive", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    render(<Dashboard />);
+    expect(screen.getAllByText("–")).toHaveLength(4);
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByText("Nenhuma transação ainda")).toBeNull();
+  });
+
   it("loads totals and the first page", async () => {
     render(<Dashboard />);
     expect(await screen.findByText("1–25 de 26")).toBeDefined();

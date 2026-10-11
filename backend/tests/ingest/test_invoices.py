@@ -5,10 +5,9 @@ from pathlib import Path
 import pytest
 
 from bankrecon.ingest import ParseError, parse_invoice_file, parse_nfe
-from bankrecon.ingest.invoices import parse_invoices_csv
+from bankrecon.ingest.invoices import parse_invoices_csv, payable_id
 
 FIXTURES = Path(__file__).parent / "fixtures"
-KEY = "35250345997418000153550010000012341123456789"
 
 
 def _read(name: str) -> bytes:
@@ -17,7 +16,7 @@ def _read(name: str) -> bytes:
 
 def test_nfe_with_installments_becomes_one_payable_per_installment():
     first, second = parse_nfe(_read("nfe_parcelada.xml"))
-    assert first.invoice_id == f"{KEY}-001"
+    assert first.invoice_id == "45997418000153-1234-1"
     assert first.number == "1234/001"
     assert first.supplier_tax_id == "45.997.418/0001-53"
     assert first.supplier_name == "Acme Logística e Transportes Ltda"
@@ -29,7 +28,7 @@ def test_nfe_with_installments_becomes_one_payable_per_installment():
 
 def test_nfe_without_installments_is_a_single_payable():
     [invoice] = parse_nfe(_read("nfe_a_vista.xml"))
-    assert invoice.invoice_id == "35250427865757000102550010000000881987654321"
+    assert invoice.invoice_id == "27865757000102-88"
     assert invoice.number == "88"
     assert invoice.due_date is None
     assert invoice.amount == Decimal("845.90")
@@ -128,3 +127,44 @@ def test_unicode_digits_in_cnpj_are_not_accepted():
     )
     with pytest.raises(ParseError, match="sem CNPJ válido"):
         parse_nfe(content)
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (("45.997.418/0001-53", "1234", "001"), "45997418000153-1234-1"),
+        (("45997418000153", "0001234", "1"), "45997418000153-1234-1"),
+        (("45997418000153", "1234", ""), "45997418000153-1234"),
+        (("45997418000153", "A-12", "B"), "45997418000153-A-12-B"),
+        (("45997418000153", "000", ""), "45997418000153-0"),
+    ],
+)
+def test_payable_id_is_the_same_for_every_format(args, expected):
+    assert payable_id(*args) == expected
+
+
+def test_nfe_and_spreadsheet_name_the_same_installments():
+    from_xml = {i.invoice_id for i in parse_nfe(_read("nfe_parcelada.xml"))}
+    from_csv = {i.invoice_id for i in parse_invoices_csv(_read("notas.csv")).rows}
+    assert from_xml <= from_csv
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (("45997418000153", "000.001.234", "1"), "45997418000153-1234-1"),
+        (("45997418000153", "1.234", ""), "45997418000153-1234"),
+        (("45997418000153", "100", "", "2"), "45997418000153-s2-100"),
+        (("45997418000153", "100", "", "001"), "45997418000153-100"),
+        (("45997418000153", "100", "", ""), "45997418000153-100"),
+    ],
+)
+def test_payable_id_normalizes_numbers_and_keeps_non_default_series(args, expected):
+    assert payable_id(*args) == expected
+
+
+def test_same_number_in_another_series_is_another_invoice():
+    series_2 = _read("nfe_a_vista.xml").replace(b"<nNF>88</nNF>", b"<nNF>88</nNF><serie>2</serie>")
+    [default] = parse_nfe(_read("nfe_a_vista.xml"))
+    [other] = parse_nfe(series_2)
+    assert default.invoice_id != other.invoice_id

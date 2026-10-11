@@ -38,3 +38,37 @@ export function pageRange(offset: number, count: number, total: number): string 
   if (total === 0) return "0 de 0";
   return `${offset + 1}–${offset + count} de ${total}`;
 }
+
+const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
+
+/** "07/04/2025, 14:30" in the viewer's timezone. */
+export function formatDateTime(iso: string): string {
+  return dateTime.format(new Date(iso));
+}
+
+/** "1 nota", "3 notas". */
+export function plural(count: number, singular: string, pluralForm: string): string {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+/** One-line account of an import, e.g. "3 importadas · 1 já existia". */
+export function importSummary(result: {
+  kind: "extrato" | "notas";
+  imported: number;
+  duplicates: number;
+  skipped: number;
+  suppliers_created?: number;
+}): string {
+  const statement = result.kind === "extrato";
+  const parts = [
+    statement
+      ? plural(result.imported, "pagamento importado", "pagamentos importados")
+      : plural(result.imported, "nota importada", "notas importadas"),
+  ];
+  if (result.duplicates) parts.push(plural(result.duplicates, "já existia", "já existiam"));
+  if (result.skipped) parts.push(plural(result.skipped, "crédito ignorado", "créditos ignorados"));
+  if (result.suppliers_created) {
+    parts.push(plural(result.suppliers_created, "fornecedor novo", "fornecedores novos"));
+  }
+  return parts.join(" · ");
+}

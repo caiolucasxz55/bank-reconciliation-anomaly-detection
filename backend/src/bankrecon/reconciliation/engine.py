@@ -148,10 +148,14 @@ class _Run:
         return inv.earliest <= tx.date and (tx.date - inv.issue_date).days <= max_days_late
 
     def _date_score(self, days: int) -> float:
-        """1.0 inside the exact window, decreasing linearly until the tolerant window ends."""
+        """1.0 from ``early_free_days`` before the reference date to ``exact_max_days``
+        after it, then decreasing linearly. Paying a little early is normal; paying weeks
+        early is as unlikely a match as paying weeks late, so among installments of one
+        invoice the one due nearest to the payment ranks first."""
         cfg = self.config
-        late_days = max(0, days - cfg.exact_max_days)
-        return 1.0 - late_days / (cfg.tolerant_max_days - cfg.exact_max_days + 1)
+        late, early = days - cfg.exact_max_days, -days - cfg.early_free_days
+        off_days = max(0, late if days >= 0 else early)
+        return max(0.0, 1.0 - off_days / (cfg.tolerant_max_days - cfg.exact_max_days + 1))
 
     def _status(self, confidence: float, ambiguous: bool) -> MatchStatus:
         if confidence >= self.config.auto_confirm_confidence and not ambiguous:
