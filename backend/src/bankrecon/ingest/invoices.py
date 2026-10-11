@@ -28,10 +28,28 @@ AUTHORIZED = {"100", "150"}
 ACCESS_KEY_LENGTH = 44
 
 
+def _strip_zeros(value: str) -> str:
+    """'001' -> '1', so '001' (NF-e) and '1' (spreadsheet) name the same installment."""
+    value = value.strip()
+    return value.lstrip("0") or "0" if value.isdigit() else value
+
+
+def payable_id(cnpj: str, number: str, installment: str = "") -> str:
+    """Id of a payable, the same whatever the file format it came from.
+
+    The supplier's CNPJ, the invoice number and the installment identify it, so importing
+    the same invoice from an NF-e XML and from a spreadsheet export is recognized as a
+    duplicate. (The NF-e series is not used: spreadsheets rarely carry it.)
+    """
+    payable = f"{only_digits(cnpj)}-{_strip_zeros(number)}"
+    return f"{payable}-{_strip_zeros(installment)}" if installment.strip() else payable
+
+
 @dataclass(frozen=True)
 class ParsedInvoice:
     """A payable: a whole invoice or one of its installments."""
 
+    # See payable_id: CNPJ + invoice number (+ installment).
     invoice_id: str
     number: str
     supplier_tax_id: str  # formatted CNPJ
@@ -108,12 +126,16 @@ def parse_nfe(content: bytes) -> list[ParsedInvoice]:
     if not installments:
         return [
             ParsedInvoice(
-                invoice_id=access_key, number=number, due_date=None, amount=total, **common
+                invoice_id=payable_id(cnpj, number),
+                number=number,
+                due_date=None,
+                amount=total,
+                **common,
             )
         ]
     return [
         ParsedInvoice(
-            invoice_id=f"{access_key}-{n_dup}",
+            invoice_id=payable_id(cnpj, number, n_dup),
             number=f"{number}/{n_dup}",
             due_date=due,
             amount=amount,
@@ -157,10 +179,8 @@ def parse_invoices_csv(content: bytes) -> ParseResult[ParsedInvoice]:
             result.errors.append(f"linha {row.line}: {error}")
             continue
         installment = v.get("parcela", "")
-        invoice_id = f"{only_digits(v['cnpj'])}-{v['numero']}"
-        number = v["numero"]
-        if installment:
-            invoice_id, number = f"{invoice_id}-{installment}", f"{number}/{installment}"
+        invoice_id = payable_id(v["cnpj"], v["numero"], installment)
+        number = f"{v['numero']}/{installment}" if installment else v["numero"]
         result.rows.append(
             ParsedInvoice(
                 invoice_id=invoice_id,
