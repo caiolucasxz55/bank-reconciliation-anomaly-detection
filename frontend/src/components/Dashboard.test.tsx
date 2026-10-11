@@ -96,6 +96,15 @@ afterEach(() => {
 const rowFor = (n: number) => screen.getByText(`PIX FORNECEDOR ${n}`);
 
 describe("Dashboard", () => {
+  it("points an empty database to the import page", async () => {
+    fake.rows = [];
+    render(<Dashboard />);
+    expect(await screen.findByText("Nenhuma transação ainda")).toBeDefined();
+    const link = screen.getByRole("link", { name: "Importar dados" });
+    expect(link.getAttribute("href")).toBe("/importar");
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
   it("loads totals and the first page", async () => {
     render(<Dashboard />);
     expect(await screen.findByText("1–25 de 26")).toBeDefined();

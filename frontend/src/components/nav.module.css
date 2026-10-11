@@ -1,0 +1,45 @@
+.nav {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  align-items: center;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 10px 16px;
+}
+
+.brand {
+  font-weight: 650;
+}
+
+.links {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.links a {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.links a:hover {
+  color: var(--text);
+  background: var(--surface-muted);
+}
+
+.links a.active {
+  color: var(--text);
+  background: var(--surface-muted);
+  font-weight: 600;
+}

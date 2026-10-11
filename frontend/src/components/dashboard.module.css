@@ -355,3 +355,28 @@
     flex: 1 1 140px;
   }
 }
+
+.emptyState {
+  max-width: 560px;
+  padding: 28px;
+  margin: 24px auto;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.emptyState h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.emptyState p {
+  margin: 0 0 16px;
+  color: var(--text-muted);
+}
+
+.emptyState .primary {
+  display: inline-block;
+  text-decoration: none;
+}
