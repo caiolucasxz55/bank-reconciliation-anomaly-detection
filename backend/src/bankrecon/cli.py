@@ -271,14 +271,7 @@ def _cmd_import_statement(args: argparse.Namespace) -> None:
 def _cmd_import_invoices(args: argparse.Namespace) -> None:
     files = _read_files(args.files)
 
-    def work(session):
-        summary = import_invoices(session, files)
-        if summary.files_failed == summary.files:
-            # Same as an unreadable statement: fail and store nothing (no empty import).
-            raise ParseError("nenhum arquivo pôde ser lido: " + "; ".join(summary.errors))
-        _print_import(summary)
-
-    _in_database(args, work)
+    _in_database(args, lambda session: _print_import(import_invoices(session, files)))
 
 
 def _cmd_process(args: argparse.Namespace) -> None:

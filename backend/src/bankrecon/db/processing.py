@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pandas as pd
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from bankrecon.anomalies import detect_anomalies
@@ -113,8 +113,24 @@ def _analyst_matches(session: Session) -> pd.DataFrame:
     return pd.DataFrame(list(rows.values()), columns=MATCH_COLUMNS).astype({"layer": "Int64"})
 
 
+# Arbitrary constant identifying the processing lock in Postgres.
+POSTGRES_PROCESSING_LOCK_ID = 7_204_118_302
+
+
+def _lock(session: Session) -> None:
+    """Serialize concurrent reprocessing (two uploads, or an upload and a manual run).
+
+    Postgres gets a transaction-scoped advisory lock; SQLite allows a single writer.
+    """
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(:id)"), {"id": POSTGRES_PROCESSING_LOCK_ID}
+        )
+
+
 def process(session: Session) -> ProcessSummary:
     """Recompute system matches and anomaly scores; runs in the caller's transaction."""
+    _lock(session)
     suppliers, invoices, transactions = _frames(session)
     kept = _analyst_matches(session)
     reviewed = set(kept["transaction_id"])

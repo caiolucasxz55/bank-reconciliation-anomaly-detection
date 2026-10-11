@@ -72,7 +72,7 @@ jobs:
             *.cache-to=type=gha,mode=max
       - name: Start the demo and check the API through the web server
         run: |
-          docker compose up -d --wait
+          LOAD_DEMO_DATA=true docker compose up -d --wait
           curl --fail --silent --retry 10 --retry-all-errors --retry-delay 3 http://localhost:3000/api/summary
           curl --fail --silent --retry 10 --retry-all-errors --retry-delay 3 http://localhost:3000/ > /dev/null
       - name: Logs on failure

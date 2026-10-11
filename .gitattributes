@@ -3,3 +3,6 @@
 # Sample bank/ERP files are kept byte-for-byte (CRLF, Windows-1252).
 backend/tests/ingest/fixtures/** -text
 frontend/public/modelos/** -text
+
+# Shell scripts run inside Linux containers: keep LF line endings.
+*.sh text eol=lf

@@ -7,15 +7,18 @@ Run with ``uvicorn --factory bankrecon.api.app:create_app``. The database comes 
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import APIRouter, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
+from bankrecon.api import imports
+from bankrecon.api.deps import SessionDep
+from bankrecon.api.limits import UploadSizeLimit
 from bankrecon.api.schemas import (
     SummaryOut,
     TransactionDetailOut,
@@ -34,16 +37,6 @@ from bankrecon.db.session import create_schema, make_engine, make_session_factor
 DEFAULT_CORS_ORIGINS = "http://localhost:3000"
 
 
-def get_session(request: Request) -> Iterator[Session]:
-    """One session per request. Writes commit explicitly *before* the response is built
-    (dependency teardown runs after the response is sent); anything uncommitted is
-    rolled back when the session closes."""
-    factory: sessionmaker[Session] = request.app.state.session_factory
-    with factory() as session:
-        yield session
-
-
-SessionDep = Annotated[Session, Depends(get_session)]
 router = APIRouter(prefix="/api")
 
 
@@ -148,5 +141,9 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
+    app.add_middleware(
+        UploadSizeLimit, max_bytes=imports.MAX_UPLOAD_BYTES, path_prefix="/api/imports"
+    )
     app.include_router(router)
+    app.include_router(imports.router)
     return app

@@ -6,7 +6,8 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from bankrecon.db.models import BankTransaction, Invoice
+from bankrecon.db.models import BankTransaction, ImportBatch, Invoice
+from bankrecon.db.processing import ProcessSummary
 from bankrecon.db.repository import SortOrder
 from bankrecon.reconciliation.models import MatchStatus
 
@@ -112,3 +113,46 @@ class TransactionPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class ImportOut(BaseModel):
+    import_id: int
+    kind: str
+    filename: str
+    created_at: datetime
+    imported: int
+    duplicates: int
+    skipped: int
+    errors: list[str]
+
+    @classmethod
+    def of(cls, batch: ImportBatch) -> ImportOut:
+        return cls(
+            import_id=batch.import_id,
+            kind=batch.kind,
+            filename=batch.filename,
+            created_at=batch.created_at,
+            imported=batch.imported,
+            duplicates=batch.duplicates,
+            skipped=batch.skipped,
+            errors=batch.errors,
+        )
+
+
+class ProcessOut(BaseModel):
+    transactions: int
+    kept_reviews: int
+    high_risk: int
+
+    @classmethod
+    def of(cls, summary: ProcessSummary) -> ProcessOut:
+        return cls(
+            transactions=summary.transactions,
+            kept_reviews=summary.kept_reviews,
+            high_risk=summary.high_risk,
+        )
+
+
+class ImportResultOut(ImportOut):
+    suppliers_created: int
+    processed: ProcessOut
