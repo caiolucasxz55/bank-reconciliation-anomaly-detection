@@ -50,6 +50,31 @@ export interface TransactionPage {
   offset: number;
 }
 
+export type ImportKind = "extrato" | "notas";
+
+export interface ImportBatch {
+  import_id: number;
+  kind: ImportKind;
+  filename: string;
+  created_at: string;
+  imported: number;
+  duplicates: number;
+  /** Lines deliberately left out: credits in a statement. */
+  skipped: number;
+  errors: string[];
+}
+
+export interface ProcessResult {
+  transactions: number;
+  kept_reviews: number;
+  high_risk: number;
+}
+
+export interface ImportResult extends ImportBatch {
+  suppliers_created: number;
+  processed: ProcessResult;
+}
+
 /** Score filter shown in the UI, mapped to API parameters. */
 export type RiskFilter = "todos" | "alto" | "top10" | "top25";
 
@@ -128,4 +153,18 @@ export const api = {
     request<TransactionDetail>(`/transactions/${encodeURIComponent(id)}/reject`, {
       method: "POST",
     }),
+  imports: (signal?: AbortSignal) => request<ImportBatch[]>("/imports", { signal }),
+  // FormData bodies: the browser sets the multipart Content-Type with its boundary.
+  importStatement: (file: File, account: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("account", account.trim() || "conta");
+    return request<ImportResult>("/imports/statement", { method: "POST", body: form });
+  },
+  importInvoices: (files: File[]) => {
+    const form = new FormData();
+    for (const file of files) form.append("files", file);
+    return request<ImportResult>("/imports/invoices", { method: "POST", body: form });
+  },
+  reprocess: () => request<ProcessResult>("/process", { method: "POST" }),
 };

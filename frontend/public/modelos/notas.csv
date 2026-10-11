@@ -1,0 +1,4 @@
+numero;cnpj;fornecedor;emissao;vencimento;valor;parcela
+1234;45.997.418/0001-53;Acme Logística e Transportes Ltda;05/03/2025;05/04/2025;1.500,00;1
+1234;45.997.418/0001-53;Acme Logística e Transportes Ltda;05/03/2025;05/05/2025;1.500,00;2
+88;27865757000102;Norte Transportes ME;08/04/2025;;845,90;

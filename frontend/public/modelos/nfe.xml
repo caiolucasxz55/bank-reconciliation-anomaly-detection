@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+  <NFe>
+    <infNFe Id="NFe35250345997418000153550010000012341123456789" versao="4.00">
+      <ide>
+        <cUF>35</cUF>
+        <natOp>Prestacao de servico de transporte</natOp>
+        <mod>55</mod>
+        <serie>1</serie>
+        <nNF>1234</nNF>
+        <dhEmi>2025-03-05T10:15:00-03:00</dhEmi>
+        <tpNF>1</tpNF>
+      </ide>
+      <emit>
+        <CNPJ>45997418000153</CNPJ>
+        <xNome>Acme Logística e Transportes Ltda</xNome>
+        <xFant>Acme Log</xFant>
+      </emit>
+      <dest>
+        <CNPJ>08143569000118</CNPJ>
+        <xNome>Empresa Compradora S.A.</xNome>
+      </dest>
+      <total>
+        <ICMSTot>
+          <vProd>3000.00</vProd>
+          <vNF>3000.00</vNF>
+        </ICMSTot>
+      </total>
+      <cobr>
+        <fat>
+          <nFat>1234</nFat>
+          <vOrig>3000.00</vOrig>
+          <vLiq>3000.00</vLiq>
+        </fat>
+        <dup>
+          <nDup>001</nDup>
+          <dVenc>2025-04-05</dVenc>
+          <vDup>1500.00</vDup>
+        </dup>
+        <dup>
+          <nDup>002</nDup>
+          <dVenc>2025-05-05</dVenc>
+          <vDup>1500.00</vDup>
+        </dup>
+      </cobr>
+    </infNFe>
+  </NFe>
+  <protNFe versao="4.00">
+    <infProt>
+      <chNFe>35250345997418000153550010000012341123456789</chNFe>
+      <cStat>100</cStat>
+      <xMotivo>Autorizado o uso da NF-e</xMotivo>
+    </infProt>
+  </protNFe>
+</nfeProc>
