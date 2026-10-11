@@ -118,7 +118,10 @@ export function Dashboard() {
         </div>
       )}
 
-      {summary.data?.total === 0 ? (
+      {!summary.data && !summary.error ? (
+        // Until the totals arrive it is unknown whether there is anything to list.
+        <SummaryCards summary={undefined} filters={filters} onSelect={changeFilters} />
+      ) : summary.data?.total === 0 ? (
         <div className={styles.emptyState}>
           <h2>Nenhuma transação ainda</h2>
           <p>

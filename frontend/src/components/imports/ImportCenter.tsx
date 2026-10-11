@@ -121,6 +121,7 @@ export function ImportCenter() {
           title="Extrato bancário"
           accept=".ofx,.qfx,.csv,.txt"
           busy={busy !== null}
+          working={busy === "extrato"}
           submitLabel="Importar extrato"
           description={
             <>
@@ -158,6 +159,7 @@ export function ImportCenter() {
           accept=".xml,.csv,.txt"
           multiple
           busy={busy !== null}
+          working={busy === "notas"}
           submitLabel="Importar notas"
           description={
             <>
@@ -223,11 +225,7 @@ export function ImportCenter() {
                       ) : (
                         <details>
                           <summary>{batch.errors.length}</summary>
-                          <ul>
-                            {batch.errors.map((error, index) => (
-                              <li key={index}>{error}</li>
-                            ))}
-                          </ul>
+                          <Errors errors={batch.errors} />
                         </details>
                       )}
                     </td>

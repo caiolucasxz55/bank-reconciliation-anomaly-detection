@@ -1,7 +1,9 @@
 # Bank Reconciliation & Anomaly Detection
 
 Plataforma que concilia extratos bancários com notas fiscais e aponta transações incomuns
-para investigação humana.
+para investigação humana. A empresa importa os arquivos que já tem (extrato **OFX** ou
+**CSV** do banco e **XML de NF-e** ou planilha das notas), e o sistema concilia, ranqueia e
+explica.
 
 O projeto se apoia em três pontos:
 
@@ -20,10 +22,14 @@ O projeto se apoia em três pontos:
 ## Como funciona
 
 ```
-gerador ──► conciliação ──► anomalias ──► Postgres ──► API (FastAPI) ──► página (Next.js)
-   │             │              │
-   └─ gabarito ──┴──► avaliação ◄┘
+extrato OFX/CSV ─┐
+NF-e XML/CSV ────┼─► importação ─► Postgres ─► conciliação + anomalias ─► API ─► página
+gerador (demo) ──┘
+   └─ gabarito ─► avaliação (só com dados sintéticos)
 ```
+
+Cada importação refaz a conciliação e o ranking sobre tudo o que está no banco. Decisões de
+analistas (aprovar ou rejeitar uma sugestão) são mantidas e não são recalculadas.
 
 | Etapa | O que faz |
 | --- | --- |
@@ -47,16 +53,21 @@ Exemplos de motivos gerados:
 
 ## Como rodar
 
-### Demo completa com Docker
+### Com Docker
 
 ```bash
 docker compose up --build
 ```
 
-Abra http://localhost:3000. Na primeira subida, a API gera os dados sintéticos, roda a
-conciliação e a detecção e carrega o Postgres. Nas subidas seguintes, ela reaproveita o
-banco, e as revisões feitas na página são mantidas. A documentação interativa da API fica
-em http://localhost:8000/docs.
+Abra http://localhost:3000 e vá em **Importar dados**. O banco começa vazio. Para ver o
+sistema com um ano de dados sintéticos em vez disso:
+
+```bash
+LOAD_DEMO_DATA=true docker compose up --build
+```
+
+Os dados ficam em volumes do Docker entre as subidas, e as migrações do banco são aplicadas
+automaticamente. A documentação interativa da API fica em http://localhost:8000/docs.
 
 Se as portas 3000 ou 8000 já estiverem em uso, troque as portas do host:
 
@@ -64,7 +75,28 @@ Se as portas 3000 ou 8000 já estiverem em uso, troque as portas do host:
 WEB_PORT=3010 API_PORT=8010 docker compose up --build
 ```
 
-A página mostra:
+### Importar dados reais
+
+| Arquivo | Formato | Observações |
+| --- | --- | --- |
+| Extrato bancário | **OFX** (v1 SGML ou v2 XML, como os bancos exportam) | Só os pagamentos (débitos) entram; créditos são ignorados. Reimportar o mesmo extrato, ou um que cubra parte do mesmo período, não duplica lançamentos. |
+| Extrato bancário | **CSV** com `data`, `descricao`, `valor` (negativo = pagamento); `documento` opcional | Separador `;`, `,` ou tab; valores como `-1.234,56` ou `-1234.56`; datas `dd/mm/aaaa` ou `aaaa-mm-dd`. Informe a **conta** para separar extratos de contas diferentes. |
+| Notas fiscais | **XML de NF-e** (vários de uma vez) | Cada parcela (`<dup>`) vira um título a pagar no seu vencimento. NF-e cancelada ou de pessoa física é recusada. O fornecedor é cadastrado pelo CNPJ. |
+| Notas fiscais | **CSV** com `numero`, `cnpj`, `emissao`, `valor`; opcionais `fornecedor`, `vencimento`, `parcela`, `serie` | A mesma nota importada em XML e em planilha é reconhecida como duplicata (CNPJ + série + número + parcela). |
+
+Arquivos-modelo podem ser baixados na própria tela de importação. Linhas inválidas são
+listadas como avisos sem impedir o resto do arquivo. Um arquivo totalmente ilegível é
+recusado e nada é gravado. Cada importação fica registrada no histórico.
+
+Pela linha de comando, útil para uma rotina diária:
+
+```bash
+bankrecon import-invoices notas/*.xml
+bankrecon import-statement extrato.ofx
+bankrecon import-statement extrato_poupanca.csv --account poupanca
+```
+
+### A página
 
 - os totais no topo (conciliadas, sugeridas, divergentes e alto risco), que também
   funcionam como filtro;
@@ -81,10 +113,15 @@ A página mostra:
 | `GET` | `/api/transactions/{id}` | Detalhe com todos os motivos e as notas casadas |
 | `POST` | `/api/transactions/{id}/approve` | Confirma uma sugestão (`409` se não for `sugerida`) |
 | `POST` | `/api/transactions/{id}/reject` | Rejeita uma sugestão; as notas voltam a ficar em aberto |
+| `POST` | `/api/imports/statement` | Importa um extrato (`file`, `account` opcional) e reprocessa |
+| `POST` | `/api/imports/invoices` | Importa notas (`files`, um ou vários) e reprocessa |
+| `GET` | `/api/imports` | Histórico das importações |
+| `POST` | `/api/process` | Reprocessa conciliação e ranking |
 
-O banco tem as tabelas `suppliers`, `invoices`, `bank_transactions`, `matches` (com a
-camada, a confiança e quem decidiu: `sistema` ou `analista`), `match_invoices` (as notas
-de cada transação) e `anomaly_scores`.
+O banco tem as tabelas `suppliers`, `invoices` (com vencimento), `bank_transactions`,
+`matches` (com a camada, a confiança e quem decidiu: `sistema` ou `analista`),
+`match_invoices` (as notas de cada transação), `anomaly_scores` e `imports` (o histórico de
+arquivos). O esquema evolui por migrações Alembic em `backend/src/bankrecon/db/migrations`.
 
 ### Pipeline em Python, sem Docker
 
@@ -196,9 +233,19 @@ Em outras seeds (1, 2 e 3) os números ficam na mesma faixa:
 - **Dados sintéticos.** O realismo vem dos padrões, não de empresas reais. Os números
   acima medem o sistema contra o próprio gerador e servem para comparar versões, não para
   prometer desempenho em dados reais.
-- **O score não é recalculado depois de uma revisão.** O ranking é calculado em lote, na
-  execução do pipeline. Quando um analista aprova ou rejeita uma sugestão, o status muda,
-  mas a posição no ranking e os motivos continuam os da última execução.
+- **O score é recalculado a cada importação, não a cada revisão.** O ranking é calculado
+  em lote. Quando um analista aprova ou rejeita uma sugestão, o status muda na hora, mas a
+  posição no ranking só é refeita na próxima importação ou com "Reprocessar tudo".
+- **Fornecedores importados não têm data de cadastro real.** Eles são cadastrados a partir
+  da primeira nota. Para não marcar todos como "novos", só conta como novo quem aparece
+  depois das duas primeiras semanas do histórico importado. Um fornecedor antigo e
+  esporádico, que aparece pela primeira vez no meio do histórico, ainda pode ser marcado.
+- **Extrato do mesmo período em OFX e em CSV duplica lançamentos.** Cada formato
+  identifica os lançamentos de um jeito (FITID do banco × conteúdo da linha); importe o
+  extrato de cada conta em um formato só.
+- **Notas da mesma série padrão.** A série 1 (a mais comum) fica fora do identificador
+  para que planilhas sem a coluna `serie` reconheçam o XML da mesma nota. Notas de séries
+  diferentes com o mesmo número só são distinguidas quando a série é informada.
 - **Bancos criados antes das migrações precisam ser recriados.** O esquema agora evolui por
   migrações (Alembic), aplicadas na subida. Um banco criado pela versão anterior, sem
   histórico de migrações, é recusado com instruções; com Docker, `docker compose down -v`.
@@ -214,14 +261,16 @@ backend/
     reconciliation/   resolução de fornecedor e as três camadas
     anomalies/        features, Isolation Forest e motivos
     evaluation/       métricas contra o gabarito e tabelas em Markdown
-    db/               modelos SQLAlchemy, carga do banco, consultas e revisões
+    ingest/           leitura de OFX, CSV e XML de NF-e
+    db/               modelos, migrações, importação, reprocessamento, consultas e revisões
     api/              aplicação FastAPI (o ML roda como módulo, não como serviço)
     results.py        persistência dos resultados com impressão digital das entradas
-    cli.py            generate, reconcile, detect, evaluate, load-db e demo
+    cli.py            import-*, process, generate, reconcile, detect, evaluate, load-db, demo
   tests/              testes unitários, de API e de ponta a ponta
 frontend/
   src/lib/            cliente tipado da API, formatação e hooks de dados
-  src/components/     totais, filtros, tabela e painel lateral (com testes)
+  src/components/     totais, filtros, tabela, painel lateral e tela de importação (com testes)
+  public/modelos/     arquivos-modelo de extrato e notas
 docker-compose.yml    Postgres, API e página
 ```
 
@@ -245,6 +294,7 @@ e sobe o `docker compose` para conferir que a página responde através da API.
 - [x] Etapa 2: conciliação em camadas, com acerto medido
 - [x] Etapa 3: anomalias com score em ranking e motivos, com recall por tipo medido
 - [x] Etapa 4: API em FastAPI, Postgres, página em Next.js e Docker Compose
+- [x] Importação de dados reais: extrato OFX/CSV, NF-e XML/CSV, histórico e reprocessamento
 - [ ] Etapa 5: GIF da demo
 
 Depois do MVP: comparar o Isolation Forest com o LOF usando o mesmo gabarito.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -28,21 +29,36 @@ AUTHORIZED = {"100", "150"}
 ACCESS_KEY_LENGTH = 44
 
 
-def _strip_zeros(value: str) -> str:
-    """'001' -> '1', so '001' (NF-e) and '1' (spreadsheet) name the same installment."""
+# Series most invoices use; it is left out of ids so spreadsheets without a series column
+# still match the NF-e XML of the same invoice.
+DEFAULT_SERIES = {"", "0", "1"}
+_NUMERIC = re.compile(r"[\d.\s/-]+")
+
+
+def canonical_number(value: str) -> str:
+    """'001' -> '1' and '000.001.234' -> '1234', so number formats from XML, ERPs and
+    spreadsheets agree; anything else (letters) is kept as typed."""
     value = value.strip()
-    return value.lstrip("0") or "0" if value.isdigit() else value
+    if _NUMERIC.fullmatch(value) and (digits := only_digits(value)):
+        return digits.lstrip("0") or "0"
+    return value
 
 
-def payable_id(cnpj: str, number: str, installment: str = "") -> str:
+def payable_id(cnpj: str, number: str, installment: str = "", series: str = "") -> str:
     """Id of a payable, the same whatever the file format it came from.
 
-    The supplier's CNPJ, the invoice number and the installment identify it, so importing
-    the same invoice from an NF-e XML and from a spreadsheet export is recognized as a
-    duplicate. (The NF-e series is not used: spreadsheets rarely carry it.)
+    Supplier CNPJ + series (only when not the default) + invoice number + installment:
+    importing the same invoice from an NF-e XML and from a spreadsheet is recognized as a
+    duplicate, while invoices with the same number in different series stay distinct
+    (NF-e numbering restarts per series).
     """
-    payable = f"{only_digits(cnpj)}-{_strip_zeros(number)}"
-    return f"{payable}-{_strip_zeros(installment)}" if installment.strip() else payable
+    parts = [only_digits(cnpj)]
+    if (series := canonical_number(series)) not in DEFAULT_SERIES:
+        parts.append(f"s{series}")
+    parts.append(canonical_number(number))
+    if installment.strip():
+        parts.append(canonical_number(installment))
+    return "-".join(parts)
 
 
 @dataclass(frozen=True)
@@ -104,6 +120,7 @@ def parse_nfe(content: bytes) -> list[ParsedInvoice]:
     if not is_valid_cnpj(cnpj):
         raise ParseError("emitente sem CNPJ válido (notas de pessoa física não são aceitas)")
     number = _text(info, "ide/nNF")
+    series = _text(info, "ide/serie")
     try:
         issued = parse_date(_text(info, "ide/dhEmi") or _text(info, "ide/dEmi"))
         installments = [
@@ -126,7 +143,7 @@ def parse_nfe(content: bytes) -> list[ParsedInvoice]:
     if not installments:
         return [
             ParsedInvoice(
-                invoice_id=payable_id(cnpj, number),
+                invoice_id=payable_id(cnpj, number, series=series),
                 number=number,
                 due_date=None,
                 amount=total,
@@ -135,7 +152,7 @@ def parse_nfe(content: bytes) -> list[ParsedInvoice]:
         ]
     return [
         ParsedInvoice(
-            invoice_id=payable_id(cnpj, number, n_dup),
+            invoice_id=payable_id(cnpj, number, n_dup, series),
             number=f"{number}/{n_dup}",
             due_date=due,
             amount=amount,
@@ -155,12 +172,13 @@ INVOICE_COLUMNS = {
     "vencimento": ("data vencimento", "data de vencimento", "data_vencimento", "vence em"),
     "valor": ("valor total", "valor da nota", "amount"),
     "parcela": ("nº parcela", "numero parcela"),
+    "serie": ("série", "serie nf"),
 }
 
 
 def parse_invoices_csv(content: bytes) -> ParseResult[ParsedInvoice]:
     """Columns ``numero``, ``cnpj``, ``emissao`` and ``valor``; ``fornecedor``,
-    ``vencimento`` and ``parcela`` optional."""
+    ``vencimento``, ``parcela`` and ``serie`` optional."""
     result: ParseResult[ParsedInvoice] = ParseResult()
     required = {"numero", "cnpj", "emissao", "valor"}
     for row in read_csv(decode(content), INVOICE_COLUMNS, required):
@@ -179,7 +197,7 @@ def parse_invoices_csv(content: bytes) -> ParseResult[ParsedInvoice]:
             result.errors.append(f"linha {row.line}: {error}")
             continue
         installment = v.get("parcela", "")
-        invoice_id = payable_id(v["cnpj"], v["numero"], installment)
+        invoice_id = payable_id(v["cnpj"], v["numero"], installment, v.get("serie", ""))
         number = f"{v['numero']}/{installment}" if installment else v["numero"]
         result.rows.append(
             ParsedInvoice(

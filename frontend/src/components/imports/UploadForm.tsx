@@ -10,7 +10,10 @@ interface Props {
   description: ReactNode;
   accept: string;
   multiple?: boolean;
+  /** Any operation is running: the form is disabled. */
   busy: boolean;
+  /** This form's own import is running. */
+  working: boolean;
   submitLabel: string;
   /** Optional extra fields (e.g. the account label), rendered above the button. */
   children?: ReactNode;
@@ -24,6 +27,7 @@ export function UploadForm({
   accept,
   multiple = false,
   busy,
+  working,
   submitLabel,
   children,
   onSubmit,
@@ -61,7 +65,7 @@ export function UploadForm({
       {files.length > 1 && <p className={styles.muted}>{files.length} arquivos selecionados</p>}
       {children}
       <button type="submit" className={styles.primary} disabled={busy || files.length === 0}>
-        {busy ? "Importando…" : submitLabel}
+        {working ? "Importando…" : submitLabel}
       </button>
     </form>
   );

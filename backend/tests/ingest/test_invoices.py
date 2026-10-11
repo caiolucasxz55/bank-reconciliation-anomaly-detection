@@ -147,3 +147,24 @@ def test_nfe_and_spreadsheet_name_the_same_installments():
     from_xml = {i.invoice_id for i in parse_nfe(_read("nfe_parcelada.xml"))}
     from_csv = {i.invoice_id for i in parse_invoices_csv(_read("notas.csv")).rows}
     assert from_xml <= from_csv
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (("45997418000153", "000.001.234", "1"), "45997418000153-1234-1"),
+        (("45997418000153", "1.234", ""), "45997418000153-1234"),
+        (("45997418000153", "100", "", "2"), "45997418000153-s2-100"),
+        (("45997418000153", "100", "", "001"), "45997418000153-100"),
+        (("45997418000153", "100", "", ""), "45997418000153-100"),
+    ],
+)
+def test_payable_id_normalizes_numbers_and_keeps_non_default_series(args, expected):
+    assert payable_id(*args) == expected
+
+
+def test_same_number_in_another_series_is_another_invoice():
+    series_2 = _read("nfe_a_vista.xml").replace(b"<nNF>88</nNF>", b"<nNF>88</nNF><serie>2</serie>")
+    [default] = parse_nfe(_read("nfe_a_vista.xml"))
+    [other] = parse_nfe(series_2)
+    assert default.invoice_id != other.invoice_id

@@ -105,6 +105,14 @@ describe("Dashboard", () => {
     expect(screen.queryByRole("table")).toBeNull();
   });
 
+  it("shows neither the table nor the empty state before the totals arrive", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    render(<Dashboard />);
+    expect(screen.getAllByText("–")).toHaveLength(4);
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByText("Nenhuma transação ainda")).toBeNull();
+  });
+
   it("loads totals and the first page", async () => {
     render(<Dashboard />);
     expect(await screen.findByText("1–25 de 26")).toBeDefined();

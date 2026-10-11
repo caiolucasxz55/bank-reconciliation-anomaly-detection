@@ -22,6 +22,8 @@ class Layer(IntEnum):
 class ReconciliationConfig:
     # Layer 1: same amount, same supplier, paid at most this many days after the invoice.
     exact_max_days: int = 5
+    # Paying up to this many days before the due date is normal and costs no confidence.
+    early_free_days: int = 10
     # Layers 2 and 3 accept later payments (delays, off-cycle payments).
     tolerant_max_days: int = 30
     # Two monthly invoices paid together and late can be ~55 days old.
@@ -47,6 +49,8 @@ class ReconciliationConfig:
                 raise ValueError(f"{name} must be in (0, 1]")
         if not 0 <= self.exact_max_days <= self.tolerant_max_days <= self.multi_max_days:
             raise ValueError("day windows must satisfy 0 <= exact <= tolerant <= multi")
+        if self.early_free_days < 0:
+            raise ValueError("early_free_days must be >= 0")
         if self.fee_tolerance < 0:
             raise ValueError("fee_tolerance must be >= 0")
         if not 0 <= self.ambiguity_margin < 1:

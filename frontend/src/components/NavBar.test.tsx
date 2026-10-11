@@ -25,4 +25,12 @@ describe("NavBar", () => {
       "/importar",
     );
   });
+
+  it.each(["/importar/", "/importar/historico"])("keeps %s under its section", (path) => {
+    pathname.current = path;
+    render(<NavBar />);
+    const link = screen.getByRole("link", { name: "Importar dados" });
+    expect(link.getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("link", { name: "Transações" }).getAttribute("aria-current")).toBeNull();
+  });
 });

@@ -132,4 +132,28 @@ describe("ImportCenter", () => {
     );
     expect(calls.some((c) => c.url === "/api/process" && c.method === "POST")).toBe(true);
   });
+
+  it("labels only the running import as in progress", async () => {
+    let release: (value: Response) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) =>
+        url === "/api/imports/statement"
+          ? new Promise<Response>((resolve) => (release = resolve))
+          : fakeFetch(url, init),
+      ),
+    );
+    render(<ImportCenter />);
+    const statement = screen.getByRole("heading", { name: "Extrato bancário" }).closest("form")!;
+    const invoices = screen.getByRole("heading", { name: "Notas fiscais" }).closest("form")!;
+    await userEvent.upload(within(statement).getByLabelText("Arquivo"), ofx());
+    await userEvent.click(within(statement).getByRole("button", { name: "Importar extrato" }));
+
+    expect(within(statement).getByRole("button", { name: "Importando…" })).toBeDefined();
+    const other = within(invoices).getByRole("button", { name: "Importar notas" });
+    expect((other as HTMLButtonElement).disabled).toBe(true);
+
+    release(new Response(JSON.stringify(statementResult), { status: 201 }));
+    expect(await screen.findByRole("status")).toBeDefined();
+  });
 });

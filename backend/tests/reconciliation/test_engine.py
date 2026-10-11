@@ -290,3 +290,17 @@ def test_installment_due_nearest_to_the_payment_wins_without_ambiguity():
     )["T1"]
     assert result.invoice_ids == ("NF1-1",)
     assert result.status is MatchStatus.RECONCILED
+
+
+def test_paying_a_few_days_early_costs_no_confidence():
+    invoices = _invoices(("NF1", "S1", "2025-05-05", 1500.00)).assign(
+        earliest_date=pd.Timestamp("2025-04-01")
+    )
+    early = _run(
+        _transactions(("T1", "2025-04-28", 1500.00, "PIX ACME LOGIST TRANS LT")), invoices
+    )["T1"]
+    on_time = _run(
+        _transactions(("T1", "2025-05-05", 1500.00, "PIX ACME LOGIST TRANS LT")), invoices
+    )["T1"]
+    assert early.confidence == on_time.confidence
+    assert early.status is MatchStatus.RECONCILED

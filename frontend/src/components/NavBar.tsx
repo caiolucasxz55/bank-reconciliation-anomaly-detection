@@ -10,6 +10,12 @@ const LINKS = [
   { href: "/importar", label: "Importar dados" },
 ];
 
+/** "/importar/" and "/importar/historico" belong to "/importar"; "/" only to itself. */
+function isCurrent(pathname: string, href: string): boolean {
+  const path = pathname.replace(/\/+$/, "") || "/";
+  return href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`);
+}
+
 export function NavBar() {
   const pathname = usePathname();
   return (
@@ -18,7 +24,7 @@ export function NavBar() {
         <span className={styles.brand}>Conciliação bancária</span>
         <ul className={styles.links}>
           {LINKS.map((link) => {
-            const current = pathname === link.href;
+            const current = isCurrent(pathname, link.href);
             return (
               <li key={link.href}>
                 <Link
