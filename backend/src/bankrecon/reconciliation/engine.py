@@ -148,10 +148,12 @@ class _Run:
         return inv.earliest <= tx.date and (tx.date - inv.issue_date).days <= max_days_late
 
     def _date_score(self, days: int) -> float:
-        """1.0 inside the exact window, decreasing linearly until the tolerant window ends."""
+        """1.0 within ``exact_max_days`` of the reference date, either side, then decreasing
+        linearly: a boleto paid weeks before its due date is as unlikely a match as one paid
+        weeks late, so the installment due nearest to the payment ranks first."""
         cfg = self.config
-        late_days = max(0, days - cfg.exact_max_days)
-        return 1.0 - late_days / (cfg.tolerant_max_days - cfg.exact_max_days + 1)
+        off_days = max(0, abs(days) - cfg.exact_max_days)
+        return max(0.0, 1.0 - off_days / (cfg.tolerant_max_days - cfg.exact_max_days + 1))
 
     def _status(self, confidence: float, ambiguous: bool) -> MatchStatus:
         if confidence >= self.config.auto_confirm_confidence and not ambiguous:

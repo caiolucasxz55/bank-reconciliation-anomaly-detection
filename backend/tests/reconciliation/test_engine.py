@@ -277,3 +277,16 @@ def test_payment_before_the_due_date_matches_when_after_the_issue_date():
 
     before_issue = _transactions(("T1", "2025-03-30", 1500.00, "PIX ACME LOGISTICA E TRANSPORTES"))
     assert _run(before_issue, invoices)["T1"].status is MatchStatus.UNMATCHED
+
+
+def test_installment_due_nearest_to_the_payment_wins_without_ambiguity():
+    # Two equal installments of one invoice issued 05/03, due 05/04 and 05/05; the
+    # abbreviated description sends the payment of 07/04 to the tolerant layer.
+    invoices = _invoices(
+        ("NF1-1", "S1", "2025-04-05", 1500.00), ("NF1-2", "S1", "2025-05-05", 1500.00)
+    ).assign(earliest_date=pd.Timestamp("2025-03-05"))
+    result = _run(
+        _transactions(("T1", "2025-04-07", 1500.00, "PIX ACME LOGIST TRANS LT")), invoices
+    )["T1"]
+    assert result.invoice_ids == ("NF1-1",)
+    assert result.status is MatchStatus.RECONCILED
